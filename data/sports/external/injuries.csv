@@ -1,0 +1,4 @@
+date,team,player,status,importance_score,expected_return
+2026-02-27,Arsenal,Player A,out,2.0,2026-03-10
+2026-02-27,Arsenal,Player B,doubtful,1.2,2026-03-05
+2026-02-27,Barcelona,Player C,injured,1.6,2026-03-15

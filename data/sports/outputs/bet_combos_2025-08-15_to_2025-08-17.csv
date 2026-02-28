@@ -1,0 +1,11 @@
+combo_size,legs,combined_odds,hit_probability,expected_roi
+2,Nottingham Forest vs Brentford -> 2 | NAC Breda vs Fortuna Sittard -> 2,10.667,0.5174,4.5198
+2,Nottingham Forest vs Brentford -> 2 | Groningen vs Heerenveen -> 2,10.907,0.4955,4.4046
+2,Nottingham Forest vs Brentford -> 2 | AVS Futebol SAD vs Casa Pia AC -> 2,8.884,0.5518,3.9016
+2,Nottingham Forest vs Brentford -> 2 | CD Tondela vs FC Famalicao -> 2,8.438,0.5789,3.8846
+2,Nottingham Forest vs Brentford -> 2 | Metz vs Strasbourg -> 2,7.752,0.626,3.8526
+3,Nottingham Forest vs Brentford -> 2 | NAC Breda vs Fortuna Sittard -> 2 | Groningen vs Heerenveen -> 2,33.922,0.3363,10.4094
+3,Nottingham Forest vs Brentford -> 2 | NAC Breda vs Fortuna Sittard -> 2 | AVS Futebol SAD vs Casa Pia AC -> 2,27.628,0.3745,9.3476
+3,Nottingham Forest vs Brentford -> 2 | NAC Breda vs Fortuna Sittard -> 2 | CD Tondela vs FC Famalicao -> 2,26.242,0.393,9.3116
+3,Nottingham Forest vs Brentford -> 2 | NAC Breda vs Fortuna Sittard -> 2 | Metz vs Strasbourg -> 2,24.108,0.4249,9.2442
+3,Nottingham Forest vs Brentford -> 2 | NAC Breda vs Fortuna Sittard -> 2 | Heracles vs NEC Nijmegen -> 2,25.708,0.3963,9.1885
