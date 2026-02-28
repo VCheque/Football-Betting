@@ -7,7 +7,7 @@ import itertools
 import re
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +45,10 @@ from sports_betting.xgboost_models import (
 DEFAULT_DATA_FILE = Path("data/sports/processed/top6_plus_portugal_matches_odds_since2022.csv")
 TOP6_DATA_FILE = Path("data/sports/processed/top6_matches_odds_since2022.csv")
 PLAYER_STATS_FILE = Path("data/sports/processed/player_stats.csv")
+
+# Background-refresh log files (gitignored via data/sports/processed/*)
+MATCHES_LOG_FILE = Path("data/sports/processed/refresh_matches.log")
+PLAYERS_LOG_FILE = Path("data/sports/processed/refresh_players.log")
 
 MARKET_OPTIONS = [
     "1X2",
@@ -274,28 +278,38 @@ def apply_style() -> None:
     )
 
 
-def run_refresh(start_season: int, end_season: int, min_date: date) -> tuple[int, str]:
-    fetch_script = Path(__file__).resolve().parent / "sports_betting" / "fetch_top6_data.py"
+def _start_background(cmd: list[str], log_file: Path) -> int:
+    """Launch cmd as a detached background process, piping stdout+stderr to log_file.
+
+    Returns the PID of the spawned process.
+    """
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_file, "w") as fh:
+        fh.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting: {' '.join(cmd)}\n\n")
+    with open(log_file, "a") as fh:
+        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT)
+    return proc.pid
+
+
+def run_refresh(start_season: int, end_season: int, min_date: date) -> int:
+    """Start match-data refresh in background. Returns PID."""
+    script = Path(__file__).resolve().parent / "sports_betting" / "fetch_top6_data.py"
     cmd = [
-        sys.executable,
-        str(fetch_script),
-        "--start-season",
-        str(start_season),
-        "--end-season",
-        str(end_season),
-        "--min-date",
-        min_date.isoformat(),
+        sys.executable, str(script),
+        "--start-season", str(start_season),
+        "--end-season",   str(end_season),
+        "--min-date",     min_date.isoformat(),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or "")
+    return _start_background(cmd, MATCHES_LOG_FILE)
 
 
-def run_player_stats_refresh(season: str = "2526") -> tuple[int, str]:
-    """Run fetch_player_stats.py as a subprocess and return (returncode, logs)."""
+def run_player_stats_refresh(api_key: str = "", season: str = "2526") -> int:
+    """Start player-stats refresh in background. Returns PID."""
     script = Path(__file__).resolve().parent / "sports_betting" / "fetch_player_stats.py"
     cmd = [sys.executable, str(script), "--season", season]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or "")
+    if api_key.strip():
+        cmd += ["--api-key", api_key.strip()]
+    return _start_background(cmd, PLAYERS_LOG_FILE)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -936,31 +950,47 @@ def main() -> None:
 
         st.divider()
         st.subheader("Refresh Data")
-        refresh_start = st.number_input("Start season", min_value=1995, max_value=2100, value=date.today().year - 20)
-        refresh_end = st.number_input("End season", min_value=1995, max_value=2100, value=date.today().year)
-        refresh_min_date = st.date_input("Min match date", value=date(date.today().year - 20, 1, 1))
-        if st.button("Refresh Data", use_container_width=True):
-            with st.spinner("Refreshing..."):
-                code, logs = run_refresh(int(refresh_start), int(refresh_end), refresh_min_date)
-            if code == 0:
-                st.success("Refresh complete")
-                st.cache_data.clear()
-            else:
-                st.error("Refresh failed")
-            st.code(logs[-3500:] if logs else "No logs")
+        st.caption(
+            "Runs in the background — you can keep using the app. "
+            "Reload the page once the jobs finish to see updated data."
+        )
+        refresh_start = st.number_input(
+            "Start season", min_value=1995, max_value=2100, value=date.today().year - 20
+        )
+        refresh_end = st.number_input(
+            "End season", min_value=1995, max_value=2100, value=date.today().year
+        )
+        refresh_min_date = st.date_input(
+            "Min match date", value=date(date.today().year - 20, 1, 1)
+        )
 
-        st.divider()
-        st.subheader("Player Stats (Understat)")
-        st.caption("Big 5 leagues · 2025-26 season · Primeira Liga not available on Understat")
-        if st.button("Fetch Player Stats", use_container_width=True):
-            with st.spinner("Downloading from Understat…"):
-                ps_code, ps_logs = run_player_stats_refresh(season="2526")
-            if ps_code == 0:
-                st.success("Player stats updated")
-                st.cache_data.clear()
-            else:
-                st.error("Fetch failed")
-            st.code(ps_logs[-3500:] if ps_logs else "No logs")
+        if st.button("🔄 Refresh All Data", use_container_width=True):
+            pid_m = run_refresh(int(refresh_start), int(refresh_end), refresh_min_date)
+            pid_p = run_player_stats_refresh(api_key=api_key, season="2526")
+            ts = datetime.now().strftime("%H:%M:%S")
+            st.session_state["_refresh_ts"] = ts
+            st.session_state["_refresh_pids"] = (pid_m, pid_p)
+            st.toast(f"Refresh started at {ts} (match PID {pid_m} · player PID {pid_p})", icon="🚀")
+
+        if "_refresh_ts" in st.session_state:
+            st.info(
+                f"Last refresh started at **{st.session_state['_refresh_ts']}**. "
+                "Reload the page when jobs complete to see new data.",
+                icon="ℹ️",
+            )
+
+        with st.expander("📋 View Refresh Logs"):
+            log_tab_m, log_tab_p = st.tabs(["Match Data", "Player Stats"])
+            with log_tab_m:
+                if MATCHES_LOG_FILE.exists():
+                    st.code(MATCHES_LOG_FILE.read_text()[-3000:] or "Empty log.")
+                else:
+                    st.caption("No match-data log yet.")
+            with log_tab_p:
+                if PLAYERS_LOG_FILE.exists():
+                    st.code(PLAYERS_LOG_FILE.read_text()[-3000:] or "Empty log.")
+                else:
+                    st.caption("No player-stats log yet.")
 
     data_path = DEFAULT_DATA_FILE
     with st.spinner("Loading data…"):
@@ -1271,8 +1301,9 @@ def main() -> None:
 
         if _player_stats_df.empty:
             st.info(
-                "No player stats cached yet. Click **Fetch Player Stats** in the sidebar to download "
-                "from Understat (Big 5 leagues only — Primeira Liga not available)."
+                "No player stats cached yet. Click **🔄 Refresh All Data** in the sidebar. "
+                "Uses API-Football if a key is set (all 6 leagues), otherwise falls back to "
+                "Understat (Big 5 only — Primeira Liga not available without an API key)."
             )
         else:
             # Filter to selected team; try exact match first, then case-insensitive
