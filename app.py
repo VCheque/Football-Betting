@@ -44,6 +44,7 @@ from sports_betting.xgboost_models import (
 
 DEFAULT_DATA_FILE = Path("data/sports/processed/top6_plus_portugal_matches_odds_since2022.csv")
 TOP6_DATA_FILE = Path("data/sports/processed/top6_matches_odds_since2022.csv")
+PLAYER_STATS_FILE = Path("data/sports/processed/player_stats.csv")
 
 MARKET_OPTIONS = [
     "1X2",
@@ -273,11 +274,7 @@ def apply_style() -> None:
     )
 
 
-def pick_data_path(option: str) -> Path:
-    return TOP6_DATA_FILE if option == "Top 6" else DEFAULT_DATA_FILE
-
-
-def run_refresh(refresh_dataset: str, start_season: int, end_season: int, min_date: date) -> tuple[int, str]:
+def run_refresh(start_season: int, end_season: int, min_date: date) -> tuple[int, str]:
     fetch_script = Path(__file__).resolve().parent / "sports_betting" / "fetch_top6_data.py"
     cmd = [
         sys.executable,
@@ -289,10 +286,34 @@ def run_refresh(refresh_dataset: str, start_season: int, end_season: int, min_da
         "--min-date",
         min_date.isoformat(),
     ]
-    if refresh_dataset == "Top 6":
-        cmd.append("--exclude-portugal")
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     return proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or "")
+
+
+def run_player_stats_refresh(season: str = "2526") -> tuple[int, str]:
+    """Run fetch_player_stats.py as a subprocess and return (returncode, logs)."""
+    script = Path(__file__).resolve().parent / "sports_betting" / "fetch_player_stats.py"
+    cmd = [sys.executable, str(script), "--season", season]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or "")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_player_stats(path: str) -> pd.DataFrame:
+    """Load cached Understat player stats CSV. Returns empty DataFrame if not found."""
+    p = Path(path)
+    if not p.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(p)
+        # Normalise team name capitalisation just in case
+        if "team" in df.columns:
+            df["team"] = df["team"].str.strip()
+        if "player" in df.columns:
+            df["player"] = df["player"].str.strip()
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 def parse_lineup_text(text: str) -> list[str]:
@@ -891,7 +912,6 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Settings")
-        dataset = st.selectbox("Dataset", ["Top 6 + Portugal", "Top 6"])
         as_of = st.date_input("As-of date", value=date.today())
         momentum_window = st.slider("Momentum window", 3, 12, 5)
         with st.expander("External data files"):
@@ -916,13 +936,12 @@ def main() -> None:
 
         st.divider()
         st.subheader("Refresh Data")
-        refresh_dataset = st.selectbox("Dataset to refresh", ["Top 6 + Portugal", "Top 6"])
         refresh_start = st.number_input("Start season", min_value=1995, max_value=2100, value=date.today().year - 20)
         refresh_end = st.number_input("End season", min_value=1995, max_value=2100, value=date.today().year)
         refresh_min_date = st.date_input("Min match date", value=date(date.today().year - 20, 1, 1))
         if st.button("Refresh Data", use_container_width=True):
             with st.spinner("Refreshing..."):
-                code, logs = run_refresh(refresh_dataset, int(refresh_start), int(refresh_end), refresh_min_date)
+                code, logs = run_refresh(int(refresh_start), int(refresh_end), refresh_min_date)
             if code == 0:
                 st.success("Refresh complete")
                 st.cache_data.clear()
@@ -930,7 +949,20 @@ def main() -> None:
                 st.error("Refresh failed")
             st.code(logs[-3500:] if logs else "No logs")
 
-    data_path = pick_data_path(dataset)
+        st.divider()
+        st.subheader("Player Stats (Understat)")
+        st.caption("Big 5 leagues · 2025-26 season · Primeira Liga not available on Understat")
+        if st.button("Fetch Player Stats", use_container_width=True):
+            with st.spinner("Downloading from Understat…"):
+                ps_code, ps_logs = run_player_stats_refresh(season="2526")
+            if ps_code == 0:
+                st.success("Player stats updated")
+                st.cache_data.clear()
+            else:
+                st.error("Fetch failed")
+            st.code(ps_logs[-3500:] if ps_logs else "No logs")
+
+    data_path = DEFAULT_DATA_FILE
     with st.spinner("Loading data…"):
         context, err = _cached_context(
             str(data_path), as_of, momentum_window,
@@ -1230,6 +1262,91 @@ def main() -> None:
 
         st.markdown("**Important injured players**")
         st.dataframe(injured, use_container_width=True, hide_index=True)
+
+        # ── Player Season Stats (Understat) ───────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### Player Season Stats · 2025-26")
+
+        _player_stats_df = load_player_stats(str(PLAYER_STATS_FILE))
+
+        if _player_stats_df.empty:
+            st.info(
+                "No player stats cached yet. Click **Fetch Player Stats** in the sidebar to download "
+                "from Understat (Big 5 leagues only — Primeira Liga not available)."
+            )
+        else:
+            # Filter to selected team; try exact match first, then case-insensitive
+            _ps_team = _player_stats_df.loc[_player_stats_df["team"] == team]
+            if _ps_team.empty:
+                _ps_team = _player_stats_df.loc[
+                    _player_stats_df["team"].str.lower() == team.lower()
+                ]
+
+            if _ps_team.empty:
+                st.info(
+                    f"No Understat data for **{team}**. "
+                    "This team may not be in the Big 5 leagues or the name differs slightly."
+                )
+            else:
+                _ps_display = (
+                    _ps_team[
+                        [
+                            "player",
+                            "position",
+                            "matches",
+                            "minutes",
+                            "goals",
+                            "xg",
+                            "assists",
+                            "xa",
+                            "shots",
+                            "key_passes",
+                            "yellow_cards",
+                            "red_cards",
+                        ]
+                    ]
+                    .rename(
+                        columns={
+                            "player": "Player",
+                            "position": "Pos",
+                            "matches": "MP",
+                            "minutes": "Min",
+                            "goals": "Goals",
+                            "xg": "xG",
+                            "assists": "Ast",
+                            "xa": "xA",
+                            "shots": "Shots",
+                            "key_passes": "Chances Created",
+                            "yellow_cards": "YC",
+                            "red_cards": "RC",
+                        }
+                    )
+                    .sort_values("Goals", ascending=False)
+                    .reset_index(drop=True)
+                )
+
+                # Round floats for readability
+                for _col in ["xG", "xA"]:
+                    if _col in _ps_display.columns:
+                        _ps_display[_col] = _ps_display[_col].round(2)
+
+                st.dataframe(
+                    _ps_display,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Goals": st.column_config.NumberColumn(format="%d"),
+                        "Ast": st.column_config.NumberColumn(format="%d"),
+                        "Shots": st.column_config.NumberColumn(format="%d"),
+                        "Chances Created": st.column_config.NumberColumn(format="%d"),
+                        "YC": st.column_config.NumberColumn(format="%d"),
+                        "RC": st.column_config.NumberColumn(format="%d"),
+                        "MP": st.column_config.NumberColumn(format="%d"),
+                        "Min": st.column_config.NumberColumn(format="%d"),
+                        "xG": st.column_config.NumberColumn(format="%.2f"),
+                        "xA": st.column_config.NumberColumn(format="%.2f"),
+                    },
+                )
 
         # ── Team Season Stats Panel ───────────────────────────────────────────
         st.markdown("---")
