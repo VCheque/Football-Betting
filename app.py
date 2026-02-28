@@ -1380,27 +1380,32 @@ def main() -> None:
     with page3:
         st.subheader("Bet Builder")
         st.caption(
-            "Pick a date range → configure a market per match → generate "
-            "Conservative / Moderate / High-Risk accumulator combinations."
+            "Select leagues + date range → fetch upcoming games → configure "
+            "markets per match → generate Conservative / Moderate / High-Risk combinations."
         )
 
-        # ── Date range + league filter ────────────────────────────────────────
-        dr1, dr2, dr3 = st.columns(3)
-        with dr1:
+        # ── Row 1: date range + multi-select leagues ──────────────────────────
+        bb_c1, bb_c2, bb_c3 = st.columns([1, 1, 2])
+        with bb_c1:
             bb_start = st.date_input("From", value=date.today(), key="bb_start")
-        with dr2:
+        with bb_c2:
             bb_end = st.date_input(
                 "To", value=date.today() + timedelta(days=7), key="bb_end"
             )
-        with dr3:
+        with bb_c3:
             all_league_names = sorted(
                 context["historical"]["league_name"].dropna().unique()
             )
-            bb_league = st.selectbox(
-                "League filter", ["All"] + all_league_names, key="bb_league"
+            bb_leagues = st.multiselect(
+                "Leagues (select up to 3)",
+                options=all_league_names,
+                default=all_league_names[:2] if len(all_league_names) >= 2 else all_league_names,
+                max_selections=3,
+                key="bb_leagues",
+                help="Hold Ctrl/Cmd to pick multiple. Max 3 leagues at once.",
             )
 
-        # ── Combination settings ──────────────────────────────────────────────
+        # ── Row 2: combination settings ───────────────────────────────────────
         sc1, sc2, sc3 = st.columns(3)
         with sc1:
             bb_legs = st.slider("Legs per combination", 2, 5, 3, key="bb_legs")
@@ -1418,316 +1423,410 @@ def main() -> None:
 
         st.markdown("---")
 
-        # ── Load match pool ───────────────────────────────────────────────────
-        all_m = context.get("all_matches", context["historical"])
-        bb_mask = (all_m["match_date"].dt.date >= bb_start) & (
-            all_m["match_date"].dt.date <= bb_end
-        )
-        if bb_league != "All":
-            bb_mask &= all_m["league_name"] == bb_league
-        bb_pool = all_m.loc[bb_mask].sort_values("match_date").copy()
-
-        if bb_pool.empty:
-            st.info(
-                "No matches found in the selected date range. "
-                "Try a wider range or refresh data from the sidebar."
-            )
+        if not bb_leagues:
+            st.info("👆 Select at least one league above to continue.")
         else:
-            upcoming_mask = ~bb_pool["result_ft"].isin(RESULT_VALUES)
-            n_upcoming = int(upcoming_mask.sum())
-            n_completed = int((~upcoming_mask).sum())
-            if n_upcoming:
-                st.success(f"✅ {n_upcoming} upcoming fixture(s) found in range.")
-            if n_completed:
-                st.info(f"📋 {n_completed} completed match(es) included (historical reference).")
+            # ── Session-state key — resets stored fixtures when config changes ─
+            fetch_key = f"{bb_start}|{bb_end}|{'|'.join(sorted(bb_leagues))}"
+            if st.session_state.get("_bb_fetch_key") != fetch_key:
+                st.session_state["_bb_fetch_key"] = fetch_key
+                st.session_state["_bb_fixtures"] = None
+                st.session_state["_bb_fetch_msg"] = None
 
-            # ── Build editable match table ─────────────────────────────────────
-            pick_rows: list[dict] = []
-            for _, row in bb_pool.iterrows():
-                is_upcoming = row["result_ft"] not in RESULT_VALUES if pd.notna(
-                    row["result_ft"]
-                ) else True
-                status_lbl = "Upcoming" if is_upcoming else f"Played ({row['result_ft']})"
-                pick_rows.append(
-                    {
-                        "include": True,
-                        "date": str(row["match_date"].date()),
-                        "league": str(row.get("league_name", "")),
-                        "home": str(row.get("home_team", "")),
-                        "away": str(row.get("away_team", "")),
-                        "status": status_lbl,
-                        "market": "1X2",
-                        "pick": "Auto best",
-                    }
+            # ── Fetch button + status ─────────────────────────────────────────
+            fc1, fc2 = st.columns([1, 3])
+            with fc1:
+                fetch_btn = st.button(
+                    "🔍 Fetch Upcoming Games",
+                    key="bb_fetch",
+                    use_container_width=True,
+                    help=(
+                        "With API key: fetches real upcoming fixtures from API-Football.\n"
+                        "Without API key: loads matches from the local dataset."
+                    ),
                 )
-            pick_df = pd.DataFrame(pick_rows)
-
-            st.caption(
-                f"**{len(pick_df)} match(es)** — check which to include, "
-                "choose a market and pick direction, then click Generate."
-            )
-            edited_picks = st.data_editor(
-                pick_df,
-                column_config={
-                    "include": st.column_config.CheckboxColumn(
-                        "✓", default=True, width="small"
-                    ),
-                    "date": st.column_config.TextColumn(
-                        "Date", disabled=True, width="small"
-                    ),
-                    "league": st.column_config.TextColumn("League", disabled=True),
-                    "home": st.column_config.TextColumn("Home", disabled=True),
-                    "away": st.column_config.TextColumn("Away", disabled=True),
-                    "status": st.column_config.TextColumn(
-                        "Status", disabled=True, width="small"
-                    ),
-                    "market": st.column_config.SelectboxColumn(
-                        "Market",
-                        options=MARKET_OPTIONS,
-                        required=True,
-                    ),
-                    "pick": st.column_config.SelectboxColumn(
-                        "Pick",
-                        options=[
-                            "Auto best",
-                            "Home / Over",
-                            "Draw",
-                            "Away / Under",
-                        ],
-                        required=True,
-                    ),
-                },
-                hide_index=True,
-                use_container_width=True,
-                num_rows="fixed",
-                key="bb_table",
-            )
-
-            st.markdown("---")
-            if st.button(
-                "⚡ Generate Combinations", use_container_width=True, key="bb_gen"
-            ):
-                included = edited_picks.loc[
-                    edited_picks["include"]
-                ].reset_index(drop=True)
-
-                if len(included) < bb_legs:
-                    st.warning(
-                        f"Please include at least **{bb_legs}** matches "
-                        f"to build {bb_legs}-leg combinations."
+            with fc2:
+                stored_msg = st.session_state.get("_bb_fetch_msg")
+                if stored_msg:
+                    st.info(stored_msg)
+                elif st.session_state.get("_bb_fixtures") is None:
+                    st.caption(
+                        "Add an **API-Football key** in the sidebar for live upcoming "
+                        "fixtures. Without it, the local dataset is used as fallback."
                     )
-                else:
-                    pick_records: list[dict] = []
-                    margin = 0.05
 
-                    with st.spinner("Computing model probabilities…"):
-                        for _, irow in included.iterrows():
-                            home_t = str(irow["home"])
-                            away_t = str(irow["away"])
-                            league_n = str(irow["league"])
-                            market = str(irow["market"])
-                            pick_sel = str(irow["pick"])
-                            mid = f"{irow['date']}|{league_n}|{home_t}|{away_t}"
+            # ── Execute fetch ─────────────────────────────────────────────────
+            if fetch_btn:
+                with st.spinner("Fetching fixtures…"):
+                    fetched_df = pd.DataFrame()
+                    fetch_msg = ""
 
-                            # ── 1X2 via XGBoost ──────────────────────────────
-                            if market == "1X2":
-                                try:
-                                    feats, _ = build_feature_vector(
-                                        context=context,
-                                        league_name=league_n,
-                                        home_team=home_t,
-                                        away_team=away_t,
-                                        h2h_years=5,
-                                        home_lineup_strength=0.0,
-                                        away_lineup_strength=0.0,
-                                        home_big_games_8d=0.0,
-                                        away_big_games_8d=0.0,
-                                    )
-                                    p1x2 = predict_match_proba(match_model, feats)
-                                except Exception:
-                                    p1x2 = {"H": 0.40, "D": 0.25, "A": 0.35}
-
-                                if pick_sel == "Auto best":
-                                    # Highest EV outcome
-                                    ev_map = {
-                                        k: p1x2[k]
-                                        * max(
-                                            1.01,
-                                            (1 / max(p1x2[k], 0.01)) * (1 - margin),
-                                        )
-                                        - 1.0
-                                        for k in p1x2
-                                    }
-                                    best_k = max(ev_map, key=ev_map.get)
-                                    candidates = [(best_k, p1x2[best_k])]
-                                elif pick_sel == "Home / Over":
-                                    candidates = [("H", p1x2["H"])]
-                                elif pick_sel == "Draw":
-                                    candidates = [("D", p1x2["D"])]
-                                else:  # Away / Under
-                                    candidates = [("A", p1x2["A"])]
-
-                                lbl_map = {
-                                    "H": "Home (1)",
-                                    "D": "Draw (X)",
-                                    "A": "Away (2)",
-                                }
-                                for outcome_k, mp in candidates:
-                                    odds_v = round(
-                                        max(1.01, (1 / max(mp, 0.01)) * (1 - margin)), 2
-                                    )
-                                    pick_records.append(
-                                        {
-                                            "match_id": mid,
-                                            "match": f"{home_t} vs {away_t}",
-                                            "league": league_n,
-                                            "market": market,
-                                            "pick_label": lbl_map[outcome_k],
-                                            "model_prob": float(mp),
-                                            "odds": odds_v,
-                                            "edge": float(mp) - 1.0 / odds_v,
-                                            "expected_roi": float(mp) * odds_v - 1.0,
-                                        }
-                                    )
-
-                            # ── Empirical O/U + BTTS markets ─────────────────
-                            else:
-                                over_p, under_p = estimate_market_proba(
-                                    context["historical"],
-                                    home_t,
-                                    away_t,
-                                    market,
-                                    league_n,
-                                    context["as_of_ts"],
-                                )
-                                if pick_sel in ("Home / Over", "Auto best"):
-                                    mp = over_p
-                                    lbl = f"{market} — Over"
-                                elif pick_sel == "Away / Under":
-                                    mp = under_p
-                                    lbl = f"{market} — Under"
-                                else:
-                                    # Draw has no meaning for O/U — default Over
-                                    mp = over_p
-                                    lbl = f"{market} — Over"
-
-                                odds_v = round(
-                                    max(1.01, (1 / max(mp, 0.01)) * (1 - margin)), 2
-                                )
-                                pick_records.append(
-                                    {
-                                        "match_id": mid,
-                                        "match": f"{home_t} vs {away_t}",
-                                        "league": league_n,
-                                        "market": market,
-                                        "pick_label": lbl,
-                                        "model_prob": float(mp),
-                                        "odds": odds_v,
-                                        "edge": float(mp) - 1.0 / odds_v,
-                                        "expected_roi": float(mp) * odds_v - 1.0,
-                                    }
-                                )
-
-                    if not pick_records:
-                        st.warning(
-                            "No picks could be generated. "
-                            "Check that the team names exist in the dataset."
+                    if api_key.strip():
+                        fetched_df, fetch_msg = fetch_upcoming_fixtures_api(
+                            api_key, bb_leagues, bb_start, bb_end
                         )
-                    else:
-                        all_picks = pd.DataFrame(pick_records)
-                        all_picks = all_picks.loc[
-                            all_picks["model_prob"] >= bb_min_prob
-                        ].reset_index(drop=True)
 
-                        if all_picks.empty:
-                            st.warning(
-                                f"No picks pass the {bb_min_prob:.0%} probability "
-                                "threshold. Lower the 'Min single-pick probability' slider."
+                    if fetched_df.empty:
+                        # Fall back to local dataset
+                        all_m = context.get("all_matches", context["historical"])
+                        mask = (
+                            (all_m["match_date"].dt.date >= bb_start)
+                            & (all_m["match_date"].dt.date <= bb_end)
+                            & (all_m["league_name"].isin(bb_leagues))
+                        )
+                        fallback = all_m.loc[mask].copy()
+                        n_fb = len(fallback)
+                        if fetch_msg:
+                            fetch_msg += (
+                                f"  Showing {n_fb} match(es) from local dataset instead."
                             )
                         else:
-                            st.markdown(
-                                f"**{len(all_picks)} pick(s)** qualify "
-                                f"(prob ≥ {bb_min_prob:.0%}). Building {bb_legs}-leg combinations…"
+                            fetch_msg = (
+                                f"📂 Loaded {n_fb} match(es) from the local dataset. "
+                                "Add an API-Football key in the sidebar to fetch real "
+                                "upcoming fixtures."
                             )
+                        fetched_df = fallback
 
-                            # Show qualifying picks
-                            with st.expander("Qualifying picks"):
-                                show_cols = [
-                                    "match",
-                                    "market",
-                                    "pick_label",
-                                    "model_prob",
-                                    "odds",
-                                    "expected_roi",
-                                ]
-                                st.dataframe(
-                                    all_picks[show_cols],
-                                    use_container_width=True,
-                                    hide_index=True,
-                                )
+                    st.session_state["_bb_fixtures"] = fetched_df
+                    st.session_state["_bb_fetch_msg"] = fetch_msg
+                    st.rerun()
 
-                            combos_all = _build_combos(all_picks, bb_legs)
+            # ── Render match table (if fixtures loaded) ───────────────────────
+            fixtures_df: pd.DataFrame | None = st.session_state.get("_bb_fixtures")
 
-                            if combos_all.empty:
+            if fixtures_df is not None:
+                if fixtures_df.empty:
+                    st.warning(
+                        "No matches found for the selected leagues / date range. "
+                        "Try different dates or refresh data from the sidebar."
+                    )
+                else:
+                    # Tag upcoming vs completed
+                    rf_col = fixtures_df.get("result_ft", pd.Series(dtype=object))
+                    upcoming_mask = ~fixtures_df["result_ft"].isin(RESULT_VALUES) if "result_ft" in fixtures_df.columns else pd.Series([True] * len(fixtures_df), index=fixtures_df.index)
+                    n_up = int(upcoming_mask.sum())
+                    n_comp = len(fixtures_df) - n_up
+                    stat_parts = []
+                    if n_up:
+                        stat_parts.append(f"✅ **{n_up}** upcoming")
+                    if n_comp:
+                        stat_parts.append(f"📋 **{n_comp}** completed (historical)")
+                    st.markdown("  ·  ".join(stat_parts))
+
+                    # Build editable pick table
+                    pick_rows: list[dict] = []
+                    for _, row in fixtures_df.iterrows():
+                        rf = row.get("result_ft", None)
+                        is_upcoming = (rf not in RESULT_VALUES) if pd.notna(rf) else True
+                        status_lbl = (
+                            "Upcoming"
+                            if is_upcoming
+                            else f"Played ({rf})"
+                        )
+                        pick_rows.append(
+                            {
+                                "include": True,
+                                "date": str(row["match_date"].date()),
+                                "league": str(row.get("league_name", "")),
+                                "home": str(row.get("home_team", "")),
+                                "away": str(row.get("away_team", "")),
+                                "status": status_lbl,
+                                "market": "1X2",
+                                "pick": "Auto best",
+                            }
+                        )
+
+                    pick_df = pd.DataFrame(pick_rows)
+                    tbl_key = f"bb_tbl_{fetch_key}"
+
+                    st.caption(
+                        f"**{len(pick_df)} match(es) loaded** — "
+                        "configure market + pick direction per row, then generate:"
+                    )
+                    edited_picks = st.data_editor(
+                        pick_df,
+                        column_config={
+                            "include": st.column_config.CheckboxColumn(
+                                "✓", default=True, width="small"
+                            ),
+                            "date": st.column_config.TextColumn(
+                                "Date", disabled=True, width="small"
+                            ),
+                            "league": st.column_config.TextColumn(
+                                "League", disabled=True
+                            ),
+                            "home": st.column_config.TextColumn(
+                                "Home", disabled=True
+                            ),
+                            "away": st.column_config.TextColumn(
+                                "Away", disabled=True
+                            ),
+                            "status": st.column_config.TextColumn(
+                                "Status", disabled=True, width="small"
+                            ),
+                            "market": st.column_config.SelectboxColumn(
+                                "Market",
+                                options=MARKET_OPTIONS,
+                                required=True,
+                            ),
+                            "pick": st.column_config.SelectboxColumn(
+                                "Pick",
+                                options=[
+                                    "Auto best",
+                                    "Home / Over",
+                                    "Draw",
+                                    "Away / Under",
+                                ],
+                                required=True,
+                            ),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                        num_rows="fixed",
+                        key=tbl_key,
+                    )
+
+                    st.markdown("---")
+                    if st.button(
+                        "⚡ Generate Combinations",
+                        use_container_width=True,
+                        key="bb_gen",
+                    ):
+                        included = edited_picks.loc[
+                            edited_picks["include"]
+                        ].reset_index(drop=True)
+
+                        if len(included) < bb_legs:
+                            st.warning(
+                                f"Please include at least **{bb_legs}** matches "
+                                f"to build {bb_legs}-leg combinations."
+                            )
+                        else:
+                            pick_records: list[dict] = []
+                            margin = 0.05
+
+                            with st.spinner("Computing model probabilities…"):
+                                for _, irow in included.iterrows():
+                                    home_t = str(irow["home"])
+                                    away_t = str(irow["away"])
+                                    league_n = str(irow["league"])
+                                    market = str(irow["market"])
+                                    pick_sel = str(irow["pick"])
+                                    mid = (
+                                        f"{irow['date']}|{league_n}|{home_t}|{away_t}"
+                                    )
+
+                                    # ── 1X2 via XGBoost ──────────────────────
+                                    if market == "1X2":
+                                        try:
+                                            feats, _ = build_feature_vector(
+                                                context=context,
+                                                league_name=league_n,
+                                                home_team=home_t,
+                                                away_team=away_t,
+                                                h2h_years=5,
+                                                home_lineup_strength=0.0,
+                                                away_lineup_strength=0.0,
+                                                home_big_games_8d=0.0,
+                                                away_big_games_8d=0.0,
+                                            )
+                                            p1x2 = predict_match_proba(
+                                                match_model, feats
+                                            )
+                                        except Exception:
+                                            p1x2 = {"H": 0.40, "D": 0.25, "A": 0.35}
+
+                                        if pick_sel == "Auto best":
+                                            ev_map = {
+                                                k: p1x2[k]
+                                                * max(
+                                                    1.01,
+                                                    (1 / max(p1x2[k], 0.01))
+                                                    * (1 - margin),
+                                                )
+                                                - 1.0
+                                                for k in p1x2
+                                            }
+                                            best_k = max(ev_map, key=ev_map.get)
+                                            candidates = [(best_k, p1x2[best_k])]
+                                        elif pick_sel == "Home / Over":
+                                            candidates = [("H", p1x2["H"])]
+                                        elif pick_sel == "Draw":
+                                            candidates = [("D", p1x2["D"])]
+                                        else:
+                                            candidates = [("A", p1x2["A"])]
+
+                                        lbl_map = {
+                                            "H": "Home (1)",
+                                            "D": "Draw (X)",
+                                            "A": "Away (2)",
+                                        }
+                                        for outcome_k, mp in candidates:
+                                            odds_v = round(
+                                                max(
+                                                    1.01,
+                                                    (1 / max(mp, 0.01)) * (1 - margin),
+                                                ),
+                                                2,
+                                            )
+                                            pick_records.append(
+                                                {
+                                                    "match_id": mid,
+                                                    "match": f"{home_t} vs {away_t}",
+                                                    "league": league_n,
+                                                    "market": market,
+                                                    "pick_label": lbl_map[outcome_k],
+                                                    "model_prob": float(mp),
+                                                    "odds": odds_v,
+                                                    "edge": float(mp) - 1.0 / odds_v,
+                                                    "expected_roi": float(mp) * odds_v
+                                                    - 1.0,
+                                                }
+                                            )
+
+                                    # ── Empirical O/U + BTTS ─────────────────
+                                    else:
+                                        over_p, under_p = estimate_market_proba(
+                                            context["historical"],
+                                            home_t,
+                                            away_t,
+                                            market,
+                                            league_n,
+                                            context["as_of_ts"],
+                                        )
+                                        if pick_sel in ("Home / Over", "Auto best"):
+                                            mp = over_p
+                                            lbl = f"{market} — Over"
+                                        elif pick_sel == "Away / Under":
+                                            mp = under_p
+                                            lbl = f"{market} — Under"
+                                        else:
+                                            mp = over_p
+                                            lbl = f"{market} — Over"
+
+                                        odds_v = round(
+                                            max(
+                                                1.01,
+                                                (1 / max(mp, 0.01)) * (1 - margin),
+                                            ),
+                                            2,
+                                        )
+                                        pick_records.append(
+                                            {
+                                                "match_id": mid,
+                                                "match": f"{home_t} vs {away_t}",
+                                                "league": league_n,
+                                                "market": market,
+                                                "pick_label": lbl,
+                                                "model_prob": float(mp),
+                                                "odds": odds_v,
+                                                "edge": float(mp) - 1.0 / odds_v,
+                                                "expected_roi": float(mp) * odds_v
+                                                - 1.0,
+                                            }
+                                        )
+
+                            if not pick_records:
                                 st.warning(
-                                    "No valid combinations found — all qualifying picks "
-                                    "may be from the same match."
+                                    "No picks could be generated. "
+                                    "Check that the team names exist in the dataset."
                                 )
                             else:
-                                # ── Three tiers ────────────────────────────────
-                                conservative = combos_all.sort_values(
-                                    "hit_probability", ascending=False
-                                ).head(bb_n)
-                                moderate = combos_all.sort_values(
-                                    "expected_roi", ascending=False
-                                ).head(bb_n)
-                                risk = combos_all.sort_values(
-                                    "combined_odds", ascending=False
-                                ).head(bb_n)
+                                all_picks = pd.DataFrame(pick_records)
+                                all_picks = all_picks.loc[
+                                    all_picks["model_prob"] >= bb_min_prob
+                                ].reset_index(drop=True)
 
-                                tier_tabs = st.tabs(
-                                    [
-                                        "🟢 Conservative",
-                                        "🟡 Moderate",
-                                        "🔴 High Risk",
-                                    ]
-                                )
-                                cols_show = [
-                                    "legs",
-                                    "combined_odds",
-                                    "hit_probability",
-                                    "expected_roi",
-                                ]
-                                with tier_tabs[0]:
-                                    st.caption(
-                                        "Highest hit-probability combinations "
-                                        "(sorted by likelihood of all legs winning)"
+                                if all_picks.empty:
+                                    st.warning(
+                                        f"No picks pass the {bb_min_prob:.0%} probability "
+                                        "threshold. Lower the "
+                                        "'Min single-pick probability' slider."
                                     )
-                                    st.dataframe(
-                                        conservative[cols_show],
-                                        use_container_width=True,
-                                        hide_index=True,
+                                else:
+                                    st.markdown(
+                                        f"**{len(all_picks)} pick(s)** qualify "
+                                        f"(prob ≥ {bb_min_prob:.0%}). "
+                                        f"Building {bb_legs}-leg combinations…"
                                     )
-                                with tier_tabs[1]:
-                                    st.caption(
-                                        "Best expected-ROI combinations "
-                                        "(balanced between probability and odds value)"
-                                    )
-                                    st.dataframe(
-                                        moderate[cols_show],
-                                        use_container_width=True,
-                                        hide_index=True,
-                                    )
-                                with tier_tabs[2]:
-                                    st.caption(
-                                        "Highest combined-odds combinations "
-                                        "(maximum payout, higher variance)"
-                                    )
-                                    st.dataframe(
-                                        risk[cols_show],
-                                        use_container_width=True,
-                                        hide_index=True,
-                                    )
+                                    with st.expander("Qualifying picks"):
+                                        st.dataframe(
+                                            all_picks[
+                                                [
+                                                    "match",
+                                                    "market",
+                                                    "pick_label",
+                                                    "model_prob",
+                                                    "odds",
+                                                    "expected_roi",
+                                                ]
+                                            ],
+                                            use_container_width=True,
+                                            hide_index=True,
+                                        )
+
+                                    combos_all = _build_combos(all_picks, bb_legs)
+
+                                    if combos_all.empty:
+                                        st.warning(
+                                            "No valid combinations found — all picks "
+                                            "may be from the same match."
+                                        )
+                                    else:
+                                        conservative = combos_all.sort_values(
+                                            "hit_probability", ascending=False
+                                        ).head(bb_n)
+                                        moderate = combos_all.sort_values(
+                                            "expected_roi", ascending=False
+                                        ).head(bb_n)
+                                        risk = combos_all.sort_values(
+                                            "combined_odds", ascending=False
+                                        ).head(bb_n)
+
+                                        tier_tabs = st.tabs(
+                                            [
+                                                "🟢 Conservative",
+                                                "🟡 Moderate",
+                                                "🔴 High Risk",
+                                            ]
+                                        )
+                                        cols_show = [
+                                            "legs",
+                                            "combined_odds",
+                                            "hit_probability",
+                                            "expected_roi",
+                                        ]
+                                        with tier_tabs[0]:
+                                            st.caption(
+                                                "Sorted by highest hit-probability "
+                                                "(all legs most likely to win)"
+                                            )
+                                            st.dataframe(
+                                                conservative[cols_show],
+                                                use_container_width=True,
+                                                hide_index=True,
+                                            )
+                                        with tier_tabs[1]:
+                                            st.caption(
+                                                "Sorted by best expected ROI "
+                                                "(balanced value + probability)"
+                                            )
+                                            st.dataframe(
+                                                moderate[cols_show],
+                                                use_container_width=True,
+                                                hide_index=True,
+                                            )
+                                        with tier_tabs[2]:
+                                            st.caption(
+                                                "Sorted by highest combined odds "
+                                                "(maximum payout, higher variance)"
+                                            )
+                                            st.dataframe(
+                                                risk[cols_show],
+                                                use_container_width=True,
+                                                hide_index=True,
+                                            )
 
     st.caption("Decision support only. Betting carries financial risk.")
 
