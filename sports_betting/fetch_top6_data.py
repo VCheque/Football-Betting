@@ -29,7 +29,6 @@ DEFAULT_TOP6 = (
     League("I1", "Serie A"),
     League("D1", "Bundesliga"),
     League("F1", "Ligue 1"),
-    League("N1", "Eredivisie"),
 )
 PORTUGAL = League("P1", "Primeira Liga")
 

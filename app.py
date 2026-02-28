@@ -66,7 +66,6 @@ LEAGUE_API_IDS: dict[str, int] = {
     "Serie A": 135,
     "Bundesliga": 78,
     "Ligue 1": 61,
-    "Eredivisie": 88,
     "Primeira Liga": 94,
 }
 
