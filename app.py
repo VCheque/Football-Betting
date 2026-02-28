@@ -1011,6 +1011,62 @@ def _build_combos(picks_df: pd.DataFrame, legs: int) -> pd.DataFrame:
     return pd.DataFrame(results)
 
 
+def _render_combos_table(
+    combos_df: pd.DataFrame,
+    picks_df: pd.DataFrame,
+    n: int,
+) -> pd.DataFrame:
+    """Expand top-N combos so every leg occupies its own row.
+
+    The last leg row of each combo shows the combination-level totals
+    (Combined Odds, Hit %, xROI).  A thin separator row is inserted between
+    combos to make them easy to scan visually.
+    """
+    top = combos_df.head(n)
+
+    # Build a fast (match, pick_label) → (prob, odds) lookup from the
+    # qualifying picks that were used to build the combos.
+    lookup: dict[tuple[str, str], tuple[float, float]] = {
+        (str(r["match"]), str(r["pick_label"])): (float(r["model_prob"]), float(r["odds"]))
+        for _, r in picks_df.iterrows()
+    }
+
+    rows: list[dict] = []
+    total = len(top)
+
+    for combo_idx, (_, combo) in enumerate(top.iterrows(), start=1):
+        legs = [leg.strip() for leg in str(combo["legs"]).split(" | ")]
+        n_legs = len(legs)
+
+        for leg_idx, leg_str in enumerate(legs, start=1):
+            is_last_leg = leg_idx == n_legs
+            parts = leg_str.split(" → ", 1)
+            match_name = parts[0].strip() if len(parts) == 2 else leg_str
+            pick_lbl   = parts[1].strip() if len(parts) == 2 else ""
+
+            prob, odds = lookup.get((match_name, pick_lbl), (None, None))
+
+            rows.append({
+                "#":            combo_idx,
+                "Match":        match_name,
+                "Pick":         pick_lbl,
+                "Prob":         f"{prob:.0%}"  if prob  is not None else "–",
+                "Odds":         f"{odds:.2f}"  if odds  is not None else "–",
+                "Combo Odds":   combo["combined_odds"]                      if is_last_leg else "",
+                "Hit %":        f"{combo['hit_probability']:.1%}"           if is_last_leg else "",
+                "xROI":         f"{combo['expected_roi']:+.1%}"             if is_last_leg else "",
+            })
+
+        # Blank separator row between combos (skip after the last one)
+        if combo_idx < total:
+            rows.append({
+                "#": "", "Match": "", "Pick": "", "Prob": "",
+                "Odds": "", "Combo Odds": "", "Hit %": "", "xROI": "",
+            })
+
+    return pd.DataFrame(rows)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _cached_context(
     data_path_str: str,
@@ -1044,7 +1100,9 @@ def main() -> None:
     st.title("Football Bets Tool")
     st.caption("Match intelligence · League standings · Player probabilities")
 
-    page1, page2, page3 = st.tabs(["Match Center", "League & Players", "Bet Builder"])
+    tab_bets, tab_match, tab_league = st.tabs(
+        ["🎯 Bet Builder", "⚽ Match Center", "📊 League & Players"]
+    )
 
     with st.sidebar:
         st.header("Settings")
@@ -1165,7 +1223,7 @@ def main() -> None:
         st.error(f"XGBoost training failed. Install xgboost and retry. Details: {exc}")
         st.stop()
 
-    with page1:
+    with tab_match:
         st.subheader("Match Center")
 
         # ── 1. League + team selection ───────────────────────────────────────
@@ -1380,7 +1438,7 @@ def main() -> None:
                 ] if c in h2h_rows.columns]
                 st.dataframe(h2h_rows[safe_h2h_cols], use_container_width=True, hide_index=True)
 
-    with page2:
+    with tab_league:
         st.subheader("League & Players")
         current_snapshot = context["current_snapshot"].copy()
         leagues = sorted(
@@ -1684,7 +1742,7 @@ def main() -> None:
     # =========================================================================
     # PAGE 3 — BET BUILDER
     # =========================================================================
-    with page3:
+    with tab_bets:
         st.subheader("Bet Builder")
         st.caption(
             "Select leagues + date range → fetch upcoming games → configure "
@@ -1716,9 +1774,24 @@ def main() -> None:
         # ── Row 2: combination settings ───────────────────────────────────────
         sc1, sc2, sc3 = st.columns(3)
         with sc1:
-            bb_legs = st.slider("Legs per combination", 2, 5, 3, key="bb_legs")
+            bb_legs = st.slider(
+                "Legs per combination", 2, 5, 3, key="bb_legs",
+                help=(
+                    "How many individual picks are combined into one bet slip.\n\n"
+                    "• 2 legs → easier to hit, lower payout\n"
+                    "• 5 legs → high payout but all legs must win\n\n"
+                    "Each leg must come from a different match."
+                ),
+            )
         with sc2:
-            bb_n = st.slider("Combinations per tier", 3, 20, 8, key="bb_n")
+            bb_n = st.slider(
+                "Combinations per tier", 3, 20, 8, key="bb_n",
+                help=(
+                    "Number of bet combinations shown per tier "
+                    "(Conservative / Moderate / High Risk).\n\n"
+                    "Raise this if you want more options to compare."
+                ),
+            )
         with sc3:
             bb_min_prob = st.slider(
                 "Min single-pick probability",
@@ -1727,6 +1800,13 @@ def main() -> None:
                 0.45,
                 step=0.01,
                 key="bb_minp",
+                help=(
+                    "Minimum model confidence required for a pick to enter combinations.\n\n"
+                    "• 0.45 → only picks the model rates ≥ 45% likely\n"
+                    "• Higher = fewer but more reliable picks\n"
+                    "• Lower = more picks but noisier output\n\n"
+                    "If no combinations appear, try lowering this value."
+                ),
             )
 
         st.markdown("---")
@@ -2063,10 +2143,10 @@ def main() -> None:
                                         "'Min single-pick probability' slider."
                                     )
                                 else:
-                                    st.markdown(
-                                        f"**{len(all_picks)} pick(s)** qualify "
-                                        f"(prob ≥ {bb_min_prob:.0%}). "
-                                        f"Building {bb_legs}-leg combinations…"
+                                    st.success(
+                                        f"**{len(all_picks)} picks** qualify "
+                                        f"(prob ≥ {bb_min_prob:.0%}) — "
+                                        f"generating **{bb_legs}-leg** combinations"
                                     )
                                     with st.expander("Qualifying picks"):
                                         st.dataframe(
@@ -2109,19 +2189,13 @@ def main() -> None:
                                                 "🔴 High Risk",
                                             ]
                                         )
-                                        cols_show = [
-                                            "legs",
-                                            "combined_odds",
-                                            "hit_probability",
-                                            "expected_roi",
-                                        ]
                                         with tier_tabs[0]:
                                             st.caption(
                                                 "Sorted by highest hit-probability "
                                                 "(all legs most likely to win)"
                                             )
                                             st.dataframe(
-                                                conservative[cols_show],
+                                                _render_combos_table(conservative, all_picks, bb_n),
                                                 use_container_width=True,
                                                 hide_index=True,
                                             )
@@ -2131,7 +2205,7 @@ def main() -> None:
                                                 "(balanced value + probability)"
                                             )
                                             st.dataframe(
-                                                moderate[cols_show],
+                                                _render_combos_table(moderate, all_picks, bb_n),
                                                 use_container_width=True,
                                                 hide_index=True,
                                             )
@@ -2141,7 +2215,7 @@ def main() -> None:
                                                 "(maximum payout, higher variance)"
                                             )
                                             st.dataframe(
-                                                risk[cols_show],
+                                                _render_combos_table(risk, all_picks, bb_n),
                                                 use_container_width=True,
                                                 hide_index=True,
                                             )
