@@ -46,9 +46,32 @@ DEFAULT_DATA_FILE = Path("data/sports/processed/top6_plus_portugal_matches_odds_
 TOP6_DATA_FILE = Path("data/sports/processed/top6_matches_odds_since2022.csv")
 PLAYER_STATS_FILE = Path("data/sports/processed/player_stats.csv")
 
-# Background-refresh log files (gitignored via data/sports/processed/*)
+# Background-refresh log / metadata files (all gitignored via data/sports/processed/*)
 MATCHES_LOG_FILE = Path("data/sports/processed/refresh_matches.log")
 PLAYERS_LOG_FILE = Path("data/sports/processed/refresh_players.log")
+METADATA_FILE    = Path("data/sports/processed/refresh_metadata.json")
+
+# Leagues we support — filters out stale Eredivisie rows still present in old CSVs
+SUPPORTED_LEAGUES: frozenset[str] = frozenset({
+    "Premier League",
+    "La Liga",
+    "Serie A",
+    "Bundesliga",
+    "Ligue 1",
+    "Primeira Liga",
+})
+
+# ESPN unofficial API slugs (free, no auth required)
+ESPN_LEAGUE_SLUGS: dict[str, str] = {
+    "Premier League": "eng.1",
+    "La Liga":        "esp.1",
+    "Serie A":        "ita.1",
+    "Bundesliga":     "ger.1",
+    "Ligue 1":        "fra.1",
+    "Primeira Liga":  "por.1",
+}
+
+_STALE_HOURS = 2.0   # auto-refresh threshold
 
 MARKET_OPTIONS = [
     "1X2",
@@ -767,6 +790,105 @@ def fetch_upcoming_fixtures_api(
     return df, msg
 
 
+def fetch_upcoming_fixtures_espn(
+    league_names: list[str],
+    start_date: date,
+    end_date: date,
+) -> tuple[pd.DataFrame, str]:
+    """Fetch upcoming fixtures from the ESPN unofficial API (free, no key required).
+
+    Endpoint: site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard
+    Supports date ranges and covers all 6 leagues including Primeira Liga.
+    """
+    if requests is None:
+        return pd.DataFrame(), "The `requests` library is not installed."
+
+    base = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+    # ESPN date range format: YYYYMMDD-YYYYMMDD
+    date_param = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+
+    rows: list[dict] = []
+    errors: list[str] = []
+
+    for league_name in league_names:
+        slug = ESPN_LEAGUE_SLUGS.get(league_name)
+        if slug is None:
+            errors.append(f"No ESPN slug mapped for '{league_name}'")
+            continue
+        try:
+            resp = requests.get(
+                f"{base}/{slug}/scoreboard",
+                params={"dates": date_param},
+                timeout=15,
+            )
+            if not resp.ok:
+                errors.append(f"{league_name}: HTTP {resp.status_code}")
+                continue
+            for ev in resp.json().get("events", []):
+                comp = (ev.get("competitions") or [{}])[0]
+                competitors = comp.get("competitors", [])
+                home_team = next(
+                    (c["team"]["displayName"] for c in competitors if c.get("homeAway") == "home"),
+                    "",
+                )
+                away_team = next(
+                    (c["team"]["displayName"] for c in competitors if c.get("homeAway") == "away"),
+                    "",
+                )
+                try:
+                    md = pd.Timestamp(ev.get("date", ""))
+                except Exception:
+                    continue
+                # Only include matches in the requested window
+                if not (start_date <= md.date() <= end_date):
+                    continue
+                rows.append({
+                    "match_date":  md,
+                    "league_name": league_name,
+                    "home_team":   _TEAM_MAP.get(home_team, home_team),
+                    "away_team":   _TEAM_MAP.get(away_team, away_team),
+                    "result_ft":   pd.NA,
+                })
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{league_name}: {exc}")
+
+    if not rows:
+        msg = "ESPN returned no fixtures for the selected range."
+        if errors:
+            msg += " Details: " + "; ".join(errors)
+        return pd.DataFrame(), msg
+
+    df = pd.DataFrame(rows).sort_values("match_date").reset_index(drop=True)
+    msg = f"✅ Fetched {len(df)} fixture(s) from ESPN (free)."
+    if errors:
+        msg += f"  ⚠️ {'; '.join(errors)}"
+    return df, msg
+
+
+# ── Refresh metadata helpers ─────────────────────────────────────────────────
+
+def load_refresh_metadata() -> dict:
+    """Load refresh_metadata.json; returns empty dict if missing/corrupt."""
+    if METADATA_FILE.exists():
+        try:
+            import json as _json  # noqa: PLC0415
+            return _json.loads(METADATA_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _is_stale(ts_str: str | None, hours: float = _STALE_HOURS) -> bool:
+    """Return True if ts_str is absent or older than `hours` hours."""
+    if not ts_str:
+        return True
+    try:
+        last = datetime.fromisoformat(ts_str)
+        return (datetime.now() - last).total_seconds() > hours * 3600
+    except Exception:
+        return True
+
+
 def estimate_market_proba(
     historical: pd.DataFrame,
     home_team: str,
@@ -992,6 +1114,38 @@ def main() -> None:
                 else:
                     st.caption("No player-stats log yet.")
 
+        # ── Last-updated metadata display ─────────────────────────────────────
+        _meta = load_refresh_metadata()
+        if _meta:
+            st.divider()
+            st.caption("**Last successful refresh**")
+            _m_ts = _meta.get("matches_last_fetch", "–")
+            _p_ts = _meta.get("players_last_fetch", "–")
+            _p_src = _meta.get("players_source", "")
+            st.caption(
+                f"📊 Matches: `{_m_ts[:16]}`  \n"
+                f"👤 Players: `{_p_ts[:16]}` ({_p_src})"
+            )
+
+    # ── Auto-refresh if data is stale (once per browser session) ─────────────
+    if not st.session_state.get("_auto_refresh_done"):
+        st.session_state["_auto_refresh_done"] = True
+        _meta = load_refresh_metadata()
+        _m_stale = _is_stale(_meta.get("matches_last_fetch"))
+        _p_stale = _is_stale(_meta.get("players_last_fetch"))
+        if _m_stale or _p_stale:
+            _ar_start = date.today().year - 5   # quick 5-year window for auto-refresh
+            _ar_end   = date.today().year
+            _ar_min   = date(_ar_start, 1, 1)
+            if _m_stale:
+                run_refresh(_ar_start, _ar_end, _ar_min)
+            if _p_stale:
+                run_player_stats_refresh(api_key=api_key, season="2526")
+            st.toast(
+                "Data was stale (>2 h) — background refresh started automatically.",
+                icon="🔄",
+            )
+
     data_path = DEFAULT_DATA_FILE
     with st.spinner("Loading data…"):
         context, err = _cached_context(
@@ -1016,7 +1170,10 @@ def main() -> None:
 
         # ── 1. League + team selection ───────────────────────────────────────
         snapshot = context["snapshot"]
-        league_names = sorted(snapshot["league_name"].dropna().unique())
+        league_names = sorted(
+            l for l in snapshot["league_name"].dropna().unique()
+            if l in SUPPORTED_LEAGUES
+        )
         league = st.selectbox("Select League", league_names)
         teams = sorted(snapshot.loc[snapshot["league_name"] == league, "team"].dropna().unique())
 
@@ -1226,7 +1383,10 @@ def main() -> None:
     with page2:
         st.subheader("League & Players")
         current_snapshot = context["current_snapshot"].copy()
-        leagues = sorted(current_snapshot["league_name"].dropna().unique())
+        leagues = sorted(
+            l for l in current_snapshot["league_name"].dropna().unique()
+            if l in SUPPORTED_LEAGUES
+        )
         league = st.selectbox("Select league", leagues, key="page2_league")
         league_table = current_snapshot.loc[current_snapshot["league_name"] == league].sort_values(
             ["position", "points", "goal_diff"], ascending=[True, False, False]
@@ -1541,7 +1701,8 @@ def main() -> None:
             )
         with bb_c3:
             all_league_names = sorted(
-                context["historical"]["league_name"].dropna().unique()
+                l for l in context["historical"]["league_name"].dropna().unique()
+                if l in SUPPORTED_LEAGUES
             )
             bb_leagues = st.multiselect(
                 "Leagues (select up to 3)",
@@ -1607,14 +1768,25 @@ def main() -> None:
                 with st.spinner("Fetching fixtures…"):
                     fetched_df = pd.DataFrame()
                     fetch_msg = ""
+                    source_used = ""
 
-                    if api_key.strip():
+                    # 1️⃣  ESPN — free, no key needed, covers all 6 leagues
+                    fetched_df, fetch_msg = fetch_upcoming_fixtures_espn(
+                        bb_leagues, bb_start, bb_end
+                    )
+                    if not fetched_df.empty:
+                        source_used = "ESPN"
+
+                    # 2️⃣  API-Football — richer data, needs key
+                    if fetched_df.empty and api_key.strip():
                         fetched_df, fetch_msg = fetch_upcoming_fixtures_api(
                             api_key, bb_leagues, bb_start, bb_end
                         )
+                        if not fetched_df.empty:
+                            source_used = "API-Football"
 
+                    # 3️⃣  Local dataset fallback
                     if fetched_df.empty:
-                        # Fall back to local dataset
                         all_m = context.get("all_matches", context["historical"])
                         mask = (
                             (all_m["match_date"].dt.date >= bb_start)
@@ -1623,17 +1795,16 @@ def main() -> None:
                         )
                         fallback = all_m.loc[mask].copy()
                         n_fb = len(fallback)
-                        if fetch_msg:
-                            fetch_msg += (
-                                f"  Showing {n_fb} match(es) from local dataset instead."
-                            )
-                        else:
-                            fetch_msg = (
-                                f"📂 Loaded {n_fb} match(es) from the local dataset. "
-                                "Add an API-Football key in the sidebar to fetch real "
-                                "upcoming fixtures."
-                            )
+                        fetch_msg = (
+                            f"📂 Loaded {n_fb} match(es) from local dataset "
+                            "(ESPN returned nothing for this date range — "
+                            "try dates within the next 2 weeks for live fixtures)."
+                        )
                         fetched_df = fallback
+                        source_used = "local dataset"
+
+                    if source_used:
+                        fetch_msg = f"[{source_used}] " + fetch_msg
 
                     st.session_state["_bb_fixtures"] = fetched_df
                     st.session_state["_bb_fetch_msg"] = fetch_msg

@@ -4,11 +4,29 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
+
+METADATA_FILE = Path("data/sports/processed/refresh_metadata.json")
+
+
+def _update_metadata(key: str, records: int, source: str, meta_path: Path = METADATA_FILE) -> None:
+    """Upsert one section in the shared refresh_metadata.json."""
+    meta: dict = {}
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text())
+        except Exception:
+            pass
+    meta[f"{key}_last_fetch"] = datetime.now().isoformat(timespec="seconds")
+    meta[f"{key}_records"] = records
+    meta[f"{key}_source"] = source
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(meta, indent=2))
 try:
     from sports_betting.team_names import TEAM_NAME_MAP
 except ModuleNotFoundError:
@@ -263,6 +281,8 @@ def main() -> None:
         raise ValueError("Invalid --min-date. Use YYYY-MM-DD format.")
     clean_df = normalize_clean(raw_df, pd.Timestamp(min_date.date()))
     save_outputs(raw_df, clean_df, args.output_dir, filename_prefix)
+    _update_metadata("matches", len(clean_df), "football-data.co.uk")
+    print(f"Metadata written to {METADATA_FILE}")
 
 
 if __name__ == "__main__":

@@ -16,10 +16,29 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+
+METADATA_FILE = Path("data/sports/processed/refresh_metadata.json")
+
+
+def _update_metadata(key: str, records: int, source: str, meta_path: Path = METADATA_FILE) -> None:
+    """Upsert one section in the shared refresh_metadata.json."""
+    meta: dict = {}
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text())
+        except Exception:
+            pass
+    meta[f"{key}_last_fetch"] = datetime.now().isoformat(timespec="seconds")
+    meta[f"{key}_records"] = records
+    meta[f"{key}_source"] = source
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(meta, indent=2))
 
 # ── League mappings ──────────────────────────────────────────────────────────
 UNDERSTAT_LEAGUES = [
@@ -165,6 +184,7 @@ def fetch_from_api_football(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(list(merged.values()))
     df.to_csv(out_path, index=False)
+    _update_metadata("players", len(df), "API-Football")
 
     msg = (
         f"[API-Football] Saved {len(df)} player records "
@@ -226,6 +246,7 @@ def fetch_from_understat(
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(out_path, index=False)
+        _update_metadata("players", len(df), "Understat")
 
         msg = (
             f"[Understat] Saved {len(df)} player records "
