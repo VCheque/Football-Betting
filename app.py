@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import itertools
+import math
 import re
 import subprocess
 import sys
@@ -85,6 +86,14 @@ MARKET_OPTIONS = [
     "Cards O/U 3.5",
     "Cards O/U 4.5",
     "BTTS",
+    "Score First",
+    "1st Half Result",
+    "Win Both Halves",
+    "1st Half Goals O/U 0.5",
+    "1st Half Goals O/U 1.5",
+    "2nd Half Goals O/U 0.5",
+    "2nd Half Goals O/U 1.5",
+    "Player to Score",
 ]
 
 # API-Football league IDs (v3.football.api-sports.io)
@@ -889,6 +898,204 @@ def _is_stale(ts_str: str | None, hours: float = _STALE_HOURS) -> bool:
         return True
 
 
+# ── Half-time / special market probability helpers ────────────────────────────
+
+def _compute_ht_result_proba(
+    historical: pd.DataFrame,
+    home_team: str,
+    away_team: str,
+    league_name: str,
+    as_of_ts: pd.Timestamp,
+    seasons: int = 3,
+) -> tuple[float, float, float]:
+    """Return (home_ht_win, draw_ht, away_ht_win) probabilities."""
+    min_date = as_of_ts - pd.Timedelta(days=seasons * 365)
+    hist = historical.loc[
+        (historical["league_name"] == league_name)
+        & (historical["match_date"] >= min_date)
+        & (historical["match_date"] < as_of_ts)
+    ]
+    if "home_goals_ht" not in hist.columns or hist.empty:
+        return 0.40, 0.27, 0.33
+
+    ht_h = pd.to_numeric(hist["home_goals_ht"], errors="coerce").fillna(0)
+    ht_a = pd.to_numeric(hist["away_goals_ht"], errors="coerce").fillna(0)
+    lg_h = float((ht_h > ht_a).mean())
+    lg_d = float((ht_h == ht_a).mean())
+    lg_a = float((ht_h < ht_a).mean())
+
+    def _win_rate(df: pd.DataFrame, team: str) -> float:
+        if df.empty:
+            return lg_h
+        r: list[int] = []
+        for _, row in df.iterrows():
+            hh = float(pd.to_numeric(row.get("home_goals_ht", 0), errors="coerce") or 0)
+            aa = float(pd.to_numeric(row.get("away_goals_ht", 0), errors="coerce") or 0)
+            r.append(
+                1 if (row["home_team"] == team and hh > aa)
+                or (row["away_team"] == team and aa > hh)
+                else 0
+            )
+        return float(np.mean(r)) if r else lg_h
+
+    h_df = hist.loc[(hist["home_team"] == home_team) | (hist["away_team"] == home_team)]
+    a_df = hist.loc[(hist["home_team"] == away_team) | (hist["away_team"] == away_team)]
+    p_h = float(np.clip(
+        (_win_rate(h_df, home_team) + (1 - _win_rate(a_df, away_team))) / 2 * 0.7 + lg_h * 0.3,
+        0.10, 0.70,
+    ))
+    p_a = float(np.clip(
+        (_win_rate(a_df, away_team) + (1 - _win_rate(h_df, home_team))) / 2 * 0.7 + lg_a * 0.3,
+        0.10, 0.70,
+    ))
+    p_d = max(0.05, 1.0 - p_h - p_a)
+    total = p_h + p_d + p_a
+    return p_h / total, p_d / total, p_a / total
+
+
+def _compute_score_first_proba(
+    historical: pd.DataFrame,
+    home_team: str,
+    away_team: str,
+    league_name: str,
+    as_of_ts: pd.Timestamp,
+    seasons: int = 3,
+) -> tuple[float, float]:
+    """Return (home_scores_first_prob, away_scores_first_prob). Proxy via HT goals."""
+    min_date = as_of_ts - pd.Timedelta(days=seasons * 365)
+    hist = historical.loc[
+        (historical["league_name"] == league_name)
+        & (historical["match_date"] >= min_date)
+        & (historical["match_date"] < as_of_ts)
+    ]
+    if "home_goals_ht" not in hist.columns or hist.empty:
+        return 0.55, 0.45
+
+    def _sf_rate(df: pd.DataFrame, team: str) -> float:
+        if df.empty:
+            return 0.5
+        total, team_first = 0, 0.0
+        for _, row in df.iterrows():
+            hh = float(pd.to_numeric(row.get("home_goals_ht", 0), errors="coerce") or 0)
+            aa = float(pd.to_numeric(row.get("away_goals_ht", 0), errors="coerce") or 0)
+            if hh + aa <= 0:
+                continue
+            total += 1
+            if row["home_team"] == team:
+                team_first += hh / (hh + aa)
+            else:
+                team_first += aa / (hh + aa)
+        return team_first / max(total, 1)
+
+    h_df = hist.loc[(hist["home_team"] == home_team) | (hist["away_team"] == home_team)]
+    a_df = hist.loc[(hist["home_team"] == away_team) | (hist["away_team"] == away_team)]
+    combined = float(np.clip(
+        (_sf_rate(h_df, home_team) + (1.0 - _sf_rate(a_df, away_team))) / 2,
+        0.15, 0.85,
+    ))
+    return combined, 1.0 - combined
+
+
+def _compute_win_both_halves_proba(
+    historical: pd.DataFrame,
+    home_team: str,
+    away_team: str,
+    league_name: str,
+    as_of_ts: pd.Timestamp,
+    seasons: int = 3,
+) -> tuple[float, float]:
+    """Return (home_wins_both_halves, away_wins_both_halves)."""
+    min_date = as_of_ts - pd.Timedelta(days=seasons * 365)
+    hist = historical.loc[
+        (historical["league_name"] == league_name)
+        & (historical["match_date"] >= min_date)
+        & (historical["match_date"] < as_of_ts)
+    ]
+    if "home_goals_ht" not in hist.columns or hist.empty:
+        return 0.22, 0.14
+
+    ht_h = pd.to_numeric(hist["home_goals_ht"], errors="coerce").fillna(0)
+    ht_a = pd.to_numeric(hist["away_goals_ht"], errors="coerce").fillna(0)
+    ft_h = pd.to_numeric(hist["home_goals_ft"], errors="coerce").fillna(0)
+    ft_a = pd.to_numeric(hist["away_goals_ft"], errors="coerce").fillna(0)
+    sh_h = (ft_h - ht_h).clip(lower=0)
+    sh_a = (ft_a - ht_a).clip(lower=0)
+    lg_home_both = float(((ht_h > ht_a) & (sh_h > sh_a)).mean())
+    lg_away_both = float(((ht_a > ht_h) & (sh_a > sh_h)).mean())
+
+    def _wbh_rate(df: pd.DataFrame, team: str, default: float) -> float:
+        if df.empty:
+            return default
+        r: list[int] = []
+        for _, row in df.iterrows():
+            hth = float(pd.to_numeric(row.get("home_goals_ht", 0), errors="coerce") or 0)
+            ath = float(pd.to_numeric(row.get("away_goals_ht", 0), errors="coerce") or 0)
+            htf = float(pd.to_numeric(row.get("home_goals_ft", 0), errors="coerce") or 0)
+            atf = float(pd.to_numeric(row.get("away_goals_ft", 0), errors="coerce") or 0)
+            sh2_h = max(0.0, htf - hth)
+            sh2_a = max(0.0, atf - ath)
+            if row["home_team"] == team:
+                r.append(int(hth > ath and sh2_h > sh2_a))
+            else:
+                r.append(int(ath > hth and sh2_a > sh2_h))
+        return float(np.mean(r)) if r else default
+
+    h_df = hist.loc[(hist["home_team"] == home_team) | (hist["away_team"] == home_team)]
+    a_df = hist.loc[(hist["home_team"] == away_team) | (hist["away_team"] == away_team)]
+    home_p = float(np.clip(
+        (_wbh_rate(h_df, home_team, lg_home_both) + lg_home_both) / 2, 0.03, 0.50
+    ))
+    away_p = float(np.clip(
+        (_wbh_rate(a_df, away_team, lg_away_both) + lg_away_both) / 2, 0.03, 0.40
+    ))
+    return home_p, away_p
+
+
+def _player_score_prob(goals: float, matches: float) -> float:
+    """Poisson probability of a player scoring at least once in a match."""
+    if matches <= 0:
+        return 0.0
+    return 1.0 - math.exp(-goals / matches)
+
+
+def _get_player_score_picks(
+    player_stats: pd.DataFrame,
+    home_team: str,
+    away_team: str,
+    top_n: int = 3,
+) -> list[tuple[str, float]]:
+    """Return list of (pick_label, prob) for top scorers from both teams."""
+    if player_stats.empty:
+        return []
+    picks: list[tuple[str, float]] = []
+    for team_name in [home_team, away_team]:
+        team_df = player_stats.loc[player_stats["team"] == team_name]
+        if team_df.empty:
+            team_df = player_stats.loc[
+                player_stats["team"].str.lower().str.contains(
+                    team_name.lower()[:7], na=False
+                )
+            ]
+        if (
+            team_df.empty
+            or "goals" not in team_df.columns
+            or "matches" not in team_df.columns
+        ):
+            continue
+        team_df = team_df.copy()
+        team_df["goals"] = pd.to_numeric(team_df["goals"], errors="coerce").fillna(0)
+        team_df["matches"] = pd.to_numeric(team_df["matches"], errors="coerce").fillna(0)
+        team_df = team_df.loc[(team_df["goals"] > 0) & (team_df["matches"] > 0)]
+        if team_df.empty:
+            continue
+        for _, pr in team_df.sort_values("goals", ascending=False).head(top_n).iterrows():
+            prob = _player_score_prob(float(pr["goals"]), float(pr["matches"]))
+            if prob >= 0.10:
+                name = str(pr.get("player", "Unknown"))
+                picks.append((f"Score: {name}", prob))
+    return picks
+
+
 def estimate_market_proba(
     historical: pd.DataFrame,
     home_team: str,
@@ -933,6 +1140,57 @@ def estimate_market_proba(
         ]
         rate = float(np.clip((_btts_rate(h_df) + _btts_rate(a_df)) / 2, 0.05, 0.95))
         return rate, 1.0 - rate
+
+    # ── 1st Half Goals O/U ───────────────────────────────────────────────────
+    if "1st half goals" in m:
+        thr = 0.5 if "0.5" in market else 1.5
+        if "home_goals_ht" in league_hist.columns:
+            def _ht_total(df: pd.DataFrame) -> pd.Series:
+                return (
+                    pd.to_numeric(df["home_goals_ht"], errors="coerce").fillna(0)
+                    + pd.to_numeric(df["away_goals_ht"], errors="coerce").fillna(0)
+                )
+            def _ht_over(df: pd.DataFrame) -> float:
+                if df.empty:
+                    return 0.5
+                return float((_ht_total(df) > thr).mean())
+            h_df = league_hist.loc[
+                (league_hist["home_team"] == home_team) | (league_hist["away_team"] == home_team)
+            ]
+            a_df = league_hist.loc[
+                (league_hist["home_team"] == away_team) | (league_hist["away_team"] == away_team)
+            ]
+            rate = float(np.clip((_ht_over(h_df) + _ht_over(a_df)) / 2, 0.05, 0.95))
+            return rate, 1.0 - rate
+        return (0.70, 0.30) if thr == 0.5 else (0.35, 0.65)
+
+    # ── 2nd Half Goals O/U ───────────────────────────────────────────────────
+    if "2nd half goals" in m:
+        thr = 0.5 if "0.5" in market else 1.5
+        if "home_goals_ht" in league_hist.columns and "home_goals_ft" in league_hist.columns:
+            def _2h_total(df: pd.DataFrame) -> pd.Series:
+                h2 = (
+                    pd.to_numeric(df["home_goals_ft"], errors="coerce").fillna(0)
+                    - pd.to_numeric(df["home_goals_ht"], errors="coerce").fillna(0)
+                ).clip(lower=0)
+                a2 = (
+                    pd.to_numeric(df["away_goals_ft"], errors="coerce").fillna(0)
+                    - pd.to_numeric(df["away_goals_ht"], errors="coerce").fillna(0)
+                ).clip(lower=0)
+                return h2 + a2
+            def _2h_over(df: pd.DataFrame) -> float:
+                if df.empty:
+                    return 0.5
+                return float((_2h_total(df) > thr).mean())
+            h_df = league_hist.loc[
+                (league_hist["home_team"] == home_team) | (league_hist["away_team"] == home_team)
+            ]
+            a_df = league_hist.loc[
+                (league_hist["home_team"] == away_team) | (league_hist["away_team"] == away_team)
+            ]
+            rate = float(np.clip((_2h_over(h_df) + _2h_over(a_df)) / 2, 0.05, 0.95))
+            return rate, 1.0 - rate
+        return (0.75, 0.25) if thr == 0.5 else (0.45, 0.55)
 
     # ── Goals / Corners / Cards O/U ─────────────────────────────────────────
     m_match = re.search(r"(\d+\.?\d*)", m.split("o/u")[-1].strip())
@@ -980,91 +1238,134 @@ def estimate_market_proba(
     return rate, 1.0 - rate
 
 
-def _build_combos(picks_df: pd.DataFrame, legs: int) -> pd.DataFrame:
-    """Build N-leg accumulator combinations from a picks DataFrame.
-
-    Each combination must use a different match (no duplicate match_id legs).
-    Returns a DataFrame with legs text, combined_odds, hit_probability, expected_roi.
-    """
-    records = picks_df.sort_values("expected_roi", ascending=False).to_dict("records")
-    results: list[dict] = []
-
-    for combo in itertools.combinations(records, legs):
-        match_ids = {r["match_id"] for r in combo}
-        if len(match_ids) < legs:
-            continue  # two legs from same match — skip
-
-        combined_odds = float(np.prod([r["odds"] for r in combo]))
-        hit_prob = float(np.prod([r["model_prob"] for r in combo]))
-        ev = hit_prob * combined_odds - 1.0
-
-        legs_text = " | ".join(f"{r['match']} → {r['pick_label']}" for r in combo)
-        results.append(
-            {
-                "legs": legs_text,
-                "combined_odds": round(combined_odds, 2),
-                "hit_probability": round(hit_prob, 4),
-                "expected_roi": round(ev, 4),
-            }
-        )
-
-    return pd.DataFrame(results)
-
-
-def _render_combos_table(
-    combos_df: pd.DataFrame,
+def _build_tickets(
     picks_df: pd.DataFrame,
-    n: int,
-) -> pd.DataFrame:
-    """Expand top-N combos so every leg occupies its own row.
+    legs: int,
+    n_tickets: int,
+) -> dict[str, pd.DataFrame]:
+    """Build N tickets per tier from picks_df.
 
-    The last leg row of each combo shows the combination-level totals
-    (Combined Odds, Hit %, xROI).  A thin separator row is inserted between
-    combos to make them easy to scan visually.
+    A ticket = up to ``legs`` picks, one pick per match (keyed by match_id).
+    Within each match the available picks are rotated across tickets to create
+    variety.  Returns a dict with keys "conservative", "moderate", "high_risk",
+    each a DataFrame with columns:
+    ticket_num, leg_num, match, market, pick_label,
+    model_prob, odds, combined_odds, hit_probability, expected_roi.
     """
-    top = combos_df.head(n)
+    _COLS = [
+        "ticket_num", "leg_num", "match", "market", "pick_label",
+        "model_prob", "odds", "combined_odds", "hit_probability", "expected_roi",
+    ]
+    _EMPTY = pd.DataFrame(columns=_COLS)
 
-    # Build a fast (match, pick_label) → (prob, odds) lookup from the
-    # qualifying picks that were used to build the combos.
-    lookup: dict[tuple[str, str], tuple[float, float]] = {
-        (str(r["match"]), str(r["pick_label"])): (float(r["model_prob"]), float(r["odds"]))
-        for _, r in picks_df.iterrows()
+    if picks_df.empty:
+        return {"conservative": _EMPTY, "moderate": _EMPTY, "high_risk": _EMPTY}
+
+    # Group picks by match_id; sort each group by model_prob descending
+    groups: dict[str, list[dict]] = {}
+    for _, row in picks_df.iterrows():
+        mid = str(row["match_id"])
+        groups.setdefault(mid, []).append(row.to_dict())
+    for mid in groups:
+        groups[mid].sort(key=lambda r: float(r.get("model_prob", 0)), reverse=True)
+
+    all_mids = list(groups.keys())
+    actual_legs = min(legs, len(all_mids))
+
+    def _best(mid: str, key: str) -> float:
+        picks = groups[mid]
+        return float(picks[0].get(key, 0.0)) if picks else 0.0
+
+    def _build_tier(sort_key: str) -> pd.DataFrame:
+        sorted_mids = sorted(all_mids, key=lambda m: _best(m, sort_key), reverse=True)
+        top_mids = sorted_mids[:actual_legs]
+        rows: list[dict] = []
+        seen: set[str] = set()
+
+        for t in range(1, n_tickets + 1):
+            # Rotate picks: ticket t, leg k → index (t-1+k) % len(options)
+            ticket_picks: list[dict] = [
+                groups[mid][(t - 1 + k) % len(groups[mid])]
+                for k, mid in enumerate(top_mids)
+            ]
+            fp = "|".join(f"{p['match_id']}:{p['pick_label']}" for p in ticket_picks)
+            # De-duplicate: try alternate offsets
+            if fp in seen:
+                for alt in range(1, 12):
+                    alt_picks = [
+                        groups[mid][(t - 1 + k + alt) % len(groups[mid])]
+                        for k, mid in enumerate(top_mids)
+                    ]
+                    fp2 = "|".join(f"{p['match_id']}:{p['pick_label']}" for p in alt_picks)
+                    if fp2 not in seen:
+                        ticket_picks, fp = alt_picks, fp2
+                        break
+            seen.add(fp)
+
+            combined_odds = float(np.prod([p["odds"] for p in ticket_picks]))
+            hit_prob = float(np.prod([p["model_prob"] for p in ticket_picks]))
+            ev = hit_prob * combined_odds - 1.0
+
+            for leg, pick in enumerate(ticket_picks, 1):
+                rows.append({
+                    "ticket_num":      t,
+                    "leg_num":         leg,
+                    "match":           pick["match"],
+                    "market":          pick["market"],
+                    "pick_label":      pick["pick_label"],
+                    "model_prob":      round(float(pick["model_prob"]), 4),
+                    "odds":            round(float(pick["odds"]), 2),
+                    "combined_odds":   round(combined_odds, 2),
+                    "hit_probability": round(hit_prob, 4),
+                    "expected_roi":    round(ev, 4),
+                })
+
+        return pd.DataFrame(rows, columns=_COLS) if rows else _EMPTY.copy()
+
+    return {
+        "conservative": _build_tier("model_prob"),
+        "moderate":     _build_tier("expected_roi"),
+        "high_risk":    _build_tier("odds"),
     }
 
+
+def _render_ticket_table(tier_df: pd.DataFrame) -> pd.DataFrame:
+    """Expand ticket DataFrame into a display-ready table.
+
+    Each leg gets its own row.  Ticket-level stats (Combo Odds, Hit %, xROI)
+    appear only on the last leg of every ticket.  A blank separator row is
+    inserted between tickets for visual clarity.
+    """
+    _DISPLAY_COLS = [
+        "Ticket", "Match", "Market", "Pick", "Prob", "Odds",
+        "Combo Odds", "Hit %", "xROI",
+    ]
+    if tier_df.empty:
+        return pd.DataFrame(columns=_DISPLAY_COLS)
+
     rows: list[dict] = []
-    total = len(top)
+    n_tickets = int(tier_df["ticket_num"].max())
 
-    for combo_idx, (_, combo) in enumerate(top.iterrows(), start=1):
-        legs = [leg.strip() for leg in str(combo["legs"]).split(" | ")]
-        n_legs = len(legs)
-
-        for leg_idx, leg_str in enumerate(legs, start=1):
-            is_last_leg = leg_idx == n_legs
-            parts = leg_str.split(" → ", 1)
-            match_name = parts[0].strip() if len(parts) == 2 else leg_str
-            pick_lbl   = parts[1].strip() if len(parts) == 2 else ""
-
-            prob, odds = lookup.get((match_name, pick_lbl), (None, None))
-
+    for t_num in range(1, n_tickets + 1):
+        tkt = tier_df[tier_df["ticket_num"] == t_num].sort_values("leg_num")
+        n_legs = len(tkt)
+        for leg_i, (_, leg) in enumerate(tkt.iterrows(), 1):
+            is_last = leg_i == n_legs
             rows.append({
-                "#":            combo_idx,
-                "Match":        match_name,
-                "Pick":         pick_lbl,
-                "Prob":         f"{prob:.0%}"  if prob  is not None else "–",
-                "Odds":         f"{odds:.2f}"  if odds  is not None else "–",
-                "Combo Odds":   combo["combined_odds"]                      if is_last_leg else "",
-                "Hit %":        f"{combo['hit_probability']:.1%}"           if is_last_leg else "",
-                "xROI":         f"{combo['expected_roi']:+.1%}"             if is_last_leg else "",
+                "Ticket":     f"#{t_num}",
+                "Match":      leg["match"],
+                "Market":     leg["market"],
+                "Pick":       leg["pick_label"],
+                "Prob":       f"{leg['model_prob']:.0%}",
+                "Odds":       f"{leg['odds']:.2f}",
+                "Combo Odds": f"{leg['combined_odds']:.2f}" if is_last else "",
+                "Hit %":      f"{leg['hit_probability']:.1%}" if is_last else "",
+                "xROI":       f"{leg['expected_roi']:+.1%}" if is_last else "",
             })
+        if t_num < n_tickets:
+            rows.append({col: "" for col in _DISPLAY_COLS})
 
-        # Blank separator row between combos (skip after the last one)
-        if combo_idx < total:
-            rows.append({
-                "#": "", "Match": "", "Pick": "", "Prob": "",
-                "Odds": "", "Combo Odds": "", "Hit %": "", "xROI": "",
-            })
-
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=_DISPLAY_COLS)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1743,10 +2044,17 @@ def main() -> None:
     # PAGE 3 — BET BUILDER
     # =========================================================================
     with tab_bets:
-        st.subheader("Bet Builder")
+        # ── Guard: reset slider session-state values that fall outside new ranges ─
+        if st.session_state.get("bb_n", 3) > 10:
+            st.session_state["bb_n"] = 3
+        if st.session_state.get("bb_legs", 8) > 12:
+            st.session_state["bb_legs"] = 8
+
+        st.subheader("🎫 Bet Builder — Tickets")
         st.caption(
             "Select leagues + date range → fetch upcoming games → configure "
-            "markets per match → generate Conservative / Moderate / High-Risk combinations."
+            "markets per match → generate Conservative / Moderate / High-Risk **tickets**. "
+            "Each ticket contains one pick per match (one pick from each of up to 8 matches)."
         )
 
         # ── Row 1: date range + multi-select leagues ──────────────────────────
@@ -1763,56 +2071,73 @@ def main() -> None:
                 if l in SUPPORTED_LEAGUES
             )
             bb_leagues = st.multiselect(
-                "Leagues (select up to 3)",
+                "Leagues",
                 options=all_league_names,
-                default=all_league_names[:2] if len(all_league_names) >= 2 else all_league_names,
-                max_selections=3,
+                default=all_league_names,
                 key="bb_leagues",
-                help="Hold Ctrl/Cmd to pick multiple. Max 3 leagues at once.",
+                help="Select any number of leagues. All 6 are selected by default.",
             )
 
-        # ── Row 2: combination settings ───────────────────────────────────────
+        # ── Row 2: ticket settings ────────────────────────────────────────────
         sc1, sc2, sc3 = st.columns(3)
         with sc1:
             bb_legs = st.slider(
-                "Legs per combination", 2, 5, 3, key="bb_legs",
+                "Legs per ticket", 2, 12, 8, key="bb_legs",
                 help=(
-                    "How many individual picks are combined into one bet slip.\n\n"
-                    "• 2 legs → easier to hit, lower payout\n"
-                    "• 5 legs → high payout but all legs must win\n\n"
-                    "Each leg must come from a different match."
+                    "How many picks form one ticket (one pick per match).\n\n"
+                    "• 8 legs (default) → one pick from each of 8 different matches\n"
+                    "• More legs = higher combined payout but harder to win.\n"
+                    "• Each leg must come from a different match."
                 ),
             )
         with sc2:
             bb_n = st.slider(
-                "Combinations per tier", 3, 20, 8, key="bb_n",
+                "Tickets per tier", 1, 10, 3, key="bb_n",
                 help=(
-                    "Number of bet combinations shown per tier "
+                    "Number of tickets shown per tier "
                     "(Conservative / Moderate / High Risk).\n\n"
-                    "Raise this if you want more options to compare."
+                    "Each ticket rotates picks for variety across the same matches."
                 ),
             )
         with sc3:
             bb_min_prob = st.slider(
                 "Min single-pick probability",
-                0.30,
+                0.15,
                 0.75,
-                0.45,
+                0.35,
                 step=0.01,
                 key="bb_minp",
                 help=(
-                    "Minimum model confidence required for a pick to enter combinations.\n\n"
-                    "• 0.45 → only picks the model rates ≥ 45% likely\n"
+                    "Minimum model confidence required for a pick to qualify.\n\n"
+                    "• 0.35 → picks the model rates ≥ 35% likely\n"
                     "• Higher = fewer but more reliable picks\n"
-                    "• Lower = more picks but noisier output\n\n"
-                    "If no combinations appear, try lowering this value."
+                    "• Lower = more picks and market variety\n\n"
+                    "For new markets (Score First, Player to Score) try 0.20–0.35."
                 ),
             )
+
+        # ── Row 3: markets to consider ────────────────────────────────────────
+        bb_markets = st.multiselect(
+            "Markets to consider",
+            options=MARKET_OPTIONS,
+            default=["1X2", "Goals O/U 2.5", "Corners O/U 9.5", "Cards O/U 3.5"],
+            key="bb_markets",
+            help=(
+                "The app generates picks for **every selected market** across **all matches**.\n\n"
+                "Each ticket leg can freely mix markets — e.g. Ticket 1 might have:\n"
+                "• Match A → Corners O/U 9.5 Over\n"
+                "• Match B → Score: Harry Kane\n"
+                "• Match C → Home (1X2)\n\n"
+                "More markets = more rotation variety across tickets."
+            ),
+        )
 
         st.markdown("---")
 
         if not bb_leagues:
             st.info("👆 Select at least one league above to continue.")
+        elif not bb_markets:
+            st.info("👆 Select at least one market above to continue.")
         else:
             # ── Session-state key — resets stored fixtures when config changes ─
             fetch_key = f"{bb_start}|{bb_end}|{'|'.join(sorted(bb_leagues))}"
@@ -1912,35 +2237,28 @@ def main() -> None:
                         stat_parts.append(f"📋 **{n_comp}** completed (historical)")
                     st.markdown("  ·  ".join(stat_parts))
 
-                    # Build editable pick table
+                    # Build editable match table (market/pick selection is now global)
                     pick_rows: list[dict] = []
                     for _, row in fixtures_df.iterrows():
                         rf = row.get("result_ft", None)
                         is_upcoming = (rf not in RESULT_VALUES) if pd.notna(rf) else True
-                        status_lbl = (
-                            "Upcoming"
-                            if is_upcoming
-                            else f"Played ({rf})"
-                        )
-                        pick_rows.append(
-                            {
-                                "include": True,
-                                "date": str(row["match_date"].date()),
-                                "league": str(row.get("league_name", "")),
-                                "home": str(row.get("home_team", "")),
-                                "away": str(row.get("away_team", "")),
-                                "status": status_lbl,
-                                "market": "1X2",
-                                "pick": "Auto best",
-                            }
-                        )
+                        status_lbl = "Upcoming" if is_upcoming else f"Played ({rf})"
+                        pick_rows.append({
+                            "include": True,
+                            "date":    str(row["match_date"].date()),
+                            "league":  str(row.get("league_name", "")),
+                            "home":    str(row.get("home_team", "")),
+                            "away":    str(row.get("away_team", "")),
+                            "status":  status_lbl,
+                        })
 
                     pick_df = pd.DataFrame(pick_rows)
                     tbl_key = f"bb_tbl_{fetch_key}"
 
                     st.caption(
                         f"**{len(pick_df)} match(es) loaded** — "
-                        "configure market + pick direction per row, then generate:"
+                        f"tick the matches to include, then click **🎫 Generate Tickets**. "
+                        f"Picks will be generated for all **{len(bb_markets)} selected market(s)**."
                     )
                     edited_picks = st.data_editor(
                         pick_df,
@@ -1948,36 +2266,11 @@ def main() -> None:
                             "include": st.column_config.CheckboxColumn(
                                 "✓", default=True, width="small"
                             ),
-                            "date": st.column_config.TextColumn(
-                                "Date", disabled=True, width="small"
-                            ),
-                            "league": st.column_config.TextColumn(
-                                "League", disabled=True
-                            ),
-                            "home": st.column_config.TextColumn(
-                                "Home", disabled=True
-                            ),
-                            "away": st.column_config.TextColumn(
-                                "Away", disabled=True
-                            ),
-                            "status": st.column_config.TextColumn(
-                                "Status", disabled=True, width="small"
-                            ),
-                            "market": st.column_config.SelectboxColumn(
-                                "Market",
-                                options=MARKET_OPTIONS,
-                                required=True,
-                            ),
-                            "pick": st.column_config.SelectboxColumn(
-                                "Pick",
-                                options=[
-                                    "Auto best",
-                                    "Home / Over",
-                                    "Draw",
-                                    "Away / Under",
-                                ],
-                                required=True,
-                            ),
+                            "date":   st.column_config.TextColumn("Date",   disabled=True, width="small"),
+                            "league": st.column_config.TextColumn("League", disabled=True),
+                            "home":   st.column_config.TextColumn("Home",   disabled=True),
+                            "away":   st.column_config.TextColumn("Away",   disabled=True),
+                            "status": st.column_config.TextColumn("Status", disabled=True, width="small"),
                         },
                         hide_index=True,
                         use_container_width=True,
@@ -1987,7 +2280,7 @@ def main() -> None:
 
                     st.markdown("---")
                     if st.button(
-                        "⚡ Generate Combinations",
+                        "🎫 Generate Tickets",
                         use_container_width=True,
                         key="bb_gen",
                     ):
@@ -1995,135 +2288,112 @@ def main() -> None:
                             edited_picks["include"]
                         ].reset_index(drop=True)
 
-                        if len(included) < bb_legs:
-                            st.warning(
-                                f"Please include at least **{bb_legs}** matches "
-                                f"to build {bb_legs}-leg combinations."
-                            )
+                        if included.empty:
+                            st.warning("Please include at least **1** match to generate tickets.")
                         else:
                             pick_records: list[dict] = []
                             margin = 0.05
+                            _pstats = load_player_stats(str(PLAYER_STATS_FILE))
 
                             with st.spinner("Computing model probabilities…"):
                                 for _, irow in included.iterrows():
-                                    home_t = str(irow["home"])
-                                    away_t = str(irow["away"])
+                                    home_t   = str(irow["home"])
+                                    away_t   = str(irow["away"])
                                     league_n = str(irow["league"])
-                                    market = str(irow["market"])
-                                    pick_sel = str(irow["pick"])
-                                    mid = (
-                                        f"{irow['date']}|{league_n}|{home_t}|{away_t}"
-                                    )
+                                    mid      = f"{irow['date']}|{league_n}|{home_t}|{away_t}"
+                                    match_lbl = f"{home_t} vs {away_t}"
 
-                                    # ── 1X2 via XGBoost ──────────────────────
-                                    if market == "1X2":
-                                        try:
-                                            feats, _ = build_feature_vector(
-                                                context=context,
-                                                league_name=league_n,
-                                                home_team=home_t,
-                                                away_team=away_t,
-                                                h2h_years=5,
-                                                home_lineup_strength=0.0,
-                                                away_lineup_strength=0.0,
-                                                home_big_games_8d=0.0,
-                                                away_big_games_8d=0.0,
-                                            )
-                                            p1x2 = predict_match_proba(
-                                                match_model, feats
-                                            )
-                                        except Exception:
-                                            p1x2 = {"H": 0.40, "D": 0.25, "A": 0.35}
+                                    # Cache 1X2 proba once per match (used by multiple markets)
+                                    _p1x2_cache: dict[str, float] | None = None
 
-                                        if pick_sel == "Auto best":
-                                            ev_map = {
-                                                k: p1x2[k]
-                                                * max(
-                                                    1.01,
-                                                    (1 / max(p1x2[k], 0.01))
-                                                    * (1 - margin),
+                                    def _get_1x2() -> dict[str, float]:
+                                        nonlocal _p1x2_cache
+                                        if _p1x2_cache is None:
+                                            try:
+                                                feats, _ = build_feature_vector(
+                                                    context=context,
+                                                    league_name=league_n,
+                                                    home_team=home_t,
+                                                    away_team=away_t,
+                                                    h2h_years=5,
+                                                    home_lineup_strength=0.0,
+                                                    away_lineup_strength=0.0,
+                                                    home_big_games_8d=0.0,
+                                                    away_big_games_8d=0.0,
                                                 )
-                                                - 1.0
-                                                for k in p1x2
-                                            }
-                                            best_k = max(ev_map, key=ev_map.get)
-                                            candidates = [(best_k, p1x2[best_k])]
-                                        elif pick_sel == "Home / Over":
-                                            candidates = [("H", p1x2["H"])]
-                                        elif pick_sel == "Draw":
-                                            candidates = [("D", p1x2["D"])]
-                                        else:
-                                            candidates = [("A", p1x2["A"])]
+                                                _p1x2_cache = predict_match_proba(match_model, feats)
+                                            except Exception:
+                                                _p1x2_cache = {"H": 0.40, "D": 0.25, "A": 0.35}
+                                        return _p1x2_cache
 
-                                        lbl_map = {
-                                            "H": "Home (1)",
-                                            "D": "Draw (X)",
-                                            "A": "Away (2)",
-                                        }
-                                        for outcome_k, mp in candidates:
-                                            odds_v = round(
-                                                max(
-                                                    1.01,
-                                                    (1 / max(mp, 0.01)) * (1 - margin),
-                                                ),
-                                                2,
+                                    # Generate picks for EVERY selected market
+                                    for market in bb_markets:
+
+                                        def _add_pick(label: str, prob: float, _mkt: str = market) -> None:
+                                            p = float(np.clip(prob, 0.01, 0.99))
+                                            oddsv = round(max(1.01, (1 / p) * (1 - margin)), 2)
+                                            pick_records.append({
+                                                "match_id":     mid,
+                                                "match":        match_lbl,
+                                                "league":       league_n,
+                                                "market":       _mkt,
+                                                "pick_label":   label,
+                                                "model_prob":   p,
+                                                "odds":         oddsv,
+                                                "edge":         p - 1.0 / oddsv,
+                                                "expected_roi": p * oddsv - 1.0,
+                                            })
+
+                                        # ── 1X2 via XGBoost ──────────────────
+                                        if market == "1X2":
+                                            p1x2 = _get_1x2()
+                                            lbl_map = {"H": "Home (1)", "D": "Draw (X)", "A": "Away (2)"}
+                                            for k, lbl in lbl_map.items():
+                                                _add_pick(lbl, p1x2[k])
+
+                                        # ── 1st Half Result ───────────────────
+                                        elif market == "1st Half Result":
+                                            ph, pd_, pa = _compute_ht_result_proba(
+                                                context["historical"], home_t, away_t,
+                                                league_n, context["as_of_ts"],
                                             )
-                                            pick_records.append(
-                                                {
-                                                    "match_id": mid,
-                                                    "match": f"{home_t} vs {away_t}",
-                                                    "league": league_n,
-                                                    "market": market,
-                                                    "pick_label": lbl_map[outcome_k],
-                                                    "model_prob": float(mp),
-                                                    "odds": odds_v,
-                                                    "edge": float(mp) - 1.0 / odds_v,
-                                                    "expected_roi": float(mp) * odds_v
-                                                    - 1.0,
-                                                }
+                                            _add_pick("HT Home (1)", ph)
+                                            _add_pick("HT Draw (X)", pd_)
+                                            _add_pick("HT Away (2)", pa)
+
+                                        # ── Score First ───────────────────────
+                                        elif market == "Score First":
+                                            home_sf, away_sf = _compute_score_first_proba(
+                                                context["historical"], home_t, away_t,
+                                                league_n, context["as_of_ts"],
                                             )
+                                            _add_pick(f"Score First — {home_t}", home_sf)
+                                            _add_pick(f"Score First — {away_t}", away_sf)
 
-                                    # ── Empirical O/U + BTTS ─────────────────
-                                    else:
-                                        over_p, under_p = estimate_market_proba(
-                                            context["historical"],
-                                            home_t,
-                                            away_t,
-                                            market,
-                                            league_n,
-                                            context["as_of_ts"],
-                                        )
-                                        if pick_sel in ("Home / Over", "Auto best"):
-                                            mp = over_p
-                                            lbl = f"{market} — Over"
-                                        elif pick_sel == "Away / Under":
-                                            mp = under_p
-                                            lbl = f"{market} — Under"
+                                        # ── Win Both Halves ───────────────────
+                                        elif market == "Win Both Halves":
+                                            home_wbh, away_wbh = _compute_win_both_halves_proba(
+                                                context["historical"], home_t, away_t,
+                                                league_n, context["as_of_ts"],
+                                            )
+                                            _add_pick(f"Win Both — {home_t}", home_wbh)
+                                            _add_pick(f"Win Both — {away_t}", away_wbh)
+
+                                        # ── Player to Score ───────────────────
+                                        elif market == "Player to Score":
+                                            for plbl, pprob in _get_player_score_picks(_pstats, home_t, away_t):
+                                                _add_pick(plbl, pprob)
+                                            if not _get_player_score_picks(_pstats, home_t, away_t):
+                                                _add_pick("Player to Score (Top Scorer)", 0.45)
+
+                                        # ── Empirical O/U + BTTS + HT Goals ──
                                         else:
-                                            mp = over_p
-                                            lbl = f"{market} — Over"
-
-                                        odds_v = round(
-                                            max(
-                                                1.01,
-                                                (1 / max(mp, 0.01)) * (1 - margin),
-                                            ),
-                                            2,
-                                        )
-                                        pick_records.append(
-                                            {
-                                                "match_id": mid,
-                                                "match": f"{home_t} vs {away_t}",
-                                                "league": league_n,
-                                                "market": market,
-                                                "pick_label": lbl,
-                                                "model_prob": float(mp),
-                                                "odds": odds_v,
-                                                "edge": float(mp) - 1.0 / odds_v,
-                                                "expected_roi": float(mp) * odds_v
-                                                - 1.0,
-                                            }
-                                        )
+                                            over_p, under_p = estimate_market_proba(
+                                                context["historical"], home_t, away_t,
+                                                market, league_n, context["as_of_ts"],
+                                            )
+                                            _add_pick(f"{market} — Over",  over_p)
+                                            _add_pick(f"{market} — Under", under_p)
 
                             if not pick_records:
                                 st.warning(
@@ -2143,79 +2413,64 @@ def main() -> None:
                                         "'Min single-pick probability' slider."
                                     )
                                 else:
+                                    n_matches = all_picks["match_id"].nunique()
                                     st.success(
-                                        f"**{len(all_picks)} picks** qualify "
+                                        f"**{len(all_picks)} pick(s)** across "
+                                        f"**{n_matches} match(es)** qualify "
                                         f"(prob ≥ {bb_min_prob:.0%}) — "
-                                        f"generating **{bb_legs}-leg** combinations"
+                                        f"building **{bb_n}** ticket(s) per tier "
+                                        f"with up to **{bb_legs}** legs each."
                                     )
                                     with st.expander("Qualifying picks"):
                                         st.dataframe(
-                                            all_picks[
-                                                [
-                                                    "match",
-                                                    "market",
-                                                    "pick_label",
-                                                    "model_prob",
-                                                    "odds",
-                                                    "expected_roi",
-                                                ]
-                                            ],
+                                            all_picks[[
+                                                "match", "market", "pick_label",
+                                                "model_prob", "odds", "expected_roi",
+                                            ]],
                                             use_container_width=True,
                                             hide_index=True,
                                         )
 
-                                    combos_all = _build_combos(all_picks, bb_legs)
+                                    tickets = _build_tickets(all_picks, bb_legs, bb_n)
 
-                                    if combos_all.empty:
+                                    if all(df.empty for df in tickets.values()):
                                         st.warning(
-                                            "No valid combinations found — all picks "
-                                            "may be from the same match."
+                                            "No valid tickets could be built — "
+                                            "all picks may be from the same match."
                                         )
                                     else:
-                                        conservative = combos_all.sort_values(
-                                            "hit_probability", ascending=False
-                                        ).head(bb_n)
-                                        moderate = combos_all.sort_values(
-                                            "expected_roi", ascending=False
-                                        ).head(bb_n)
-                                        risk = combos_all.sort_values(
-                                            "combined_odds", ascending=False
-                                        ).head(bb_n)
-
-                                        tier_tabs = st.tabs(
-                                            [
-                                                "🟢 Conservative",
-                                                "🟡 Moderate",
-                                                "🔴 High Risk",
-                                            ]
-                                        )
+                                        tier_tabs = st.tabs([
+                                            "🟢 Conservative",
+                                            "🟡 Moderate",
+                                            "🔴 High Risk",
+                                        ])
                                         with tier_tabs[0]:
                                             st.caption(
-                                                "Sorted by highest hit-probability "
-                                                "(all legs most likely to win)"
+                                                "Matches sorted by highest hit-probability "
+                                                "(safest legs first)"
                                             )
                                             st.dataframe(
-                                                _render_combos_table(conservative, all_picks, bb_n),
+                                                _render_ticket_table(tickets["conservative"]),
                                                 use_container_width=True,
                                                 hide_index=True,
                                             )
                                         with tier_tabs[1]:
                                             st.caption(
-                                                "Sorted by best expected ROI "
+                                                "Matches sorted by best expected ROI "
                                                 "(balanced value + probability)"
                                             )
                                             st.dataframe(
-                                                _render_combos_table(moderate, all_picks, bb_n),
+                                                _render_ticket_table(tickets["moderate"]),
                                                 use_container_width=True,
                                                 hide_index=True,
                                             )
                                         with tier_tabs[2]:
                                             st.caption(
-                                                "Sorted by highest combined odds "
+                                                "Matches sorted by highest individual odds "
                                                 "(maximum payout, higher variance)"
                                             )
                                             st.dataframe(
-                                                _render_combos_table(risk, all_picks, bb_n),
+                                                _render_ticket_table(tickets["high_risk"]),
                                                 use_container_width=True,
                                                 hide_index=True,
                                             )
