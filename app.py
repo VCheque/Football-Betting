@@ -1570,10 +1570,21 @@ def _cached_context(
     )
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def _cached_models(historical: pd.DataFrame, injuries_df: pd.DataFrame, contrib_df: pd.DataFrame):
-    match_model = train_match_model(historical, injuries_df=injuries_df)
-    player_models = train_player_models(contrib_df)
+@st.cache_resource(show_spinner=False)
+def _cached_models(
+    _historical: pd.DataFrame,
+    _injuries_df: pd.DataFrame,
+    _contrib_df: pd.DataFrame,
+):
+    """Train and cache XGBoost models in-memory.
+
+    Uses cache_resource instead of cache_data so the XGBClassifier objects are
+    stored as live Python objects rather than being pickled/unpickled.  Pickling
+    XGBClassifier (xgboost ≥ 3.x) inside Streamlit's cache layer triggers a
+    sklearn import check that can fail even when scikit-learn is installed.
+    """
+    match_model = train_match_model(_historical, injuries_df=_injuries_df)
+    player_models = train_player_models(_contrib_df)
     return match_model, player_models
 
 
