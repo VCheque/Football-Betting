@@ -23,7 +23,8 @@ from pathlib import Path
 
 import pandas as pd
 
-METADATA_FILE = Path("data/sports/processed/refresh_metadata.json")
+_HERE = Path(__file__).resolve().parent.parent  # repo root
+METADATA_FILE = _HERE / "data/sports/processed/refresh_metadata.json"
 
 
 def _update_metadata(key: str, records: int, source: str, meta_path: Path = METADATA_FILE) -> None:
@@ -60,7 +61,7 @@ API_FOOTBALL_LEAGUES: dict[str, int] = {
 }
 
 DEFAULT_SEASON = "2526"          # 2025-26
-OUT_PATH = Path("data/sports/processed/player_stats.csv")
+OUT_PATH = _HERE / "data/sports/processed/player_stats.csv"
 
 # Endpoints that return top-20 players per category — cheap (1 req each)
 _TOP_ENDPOINTS = ["topscorers", "topassists", "topyellowcards", "topredcards"]

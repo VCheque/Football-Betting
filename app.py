@@ -43,14 +43,18 @@ from sports_betting.xgboost_models import (
     train_player_models,
 )
 
-DEFAULT_DATA_FILE = Path("data/sports/processed/top6_plus_portugal_matches_odds_since2022.csv")
-TOP6_DATA_FILE = Path("data/sports/processed/top6_matches_odds_since2022.csv")
-PLAYER_STATS_FILE = Path("data/sports/processed/player_stats.csv")
+# Anchor every data path to the directory that contains app.py so Streamlit can
+# be launched from any working directory (e.g.  streamlit run /full/path/app.py)
+_APP_DIR = Path(__file__).resolve().parent
+
+DEFAULT_DATA_FILE = _APP_DIR / "data/sports/processed/top6_plus_portugal_matches_odds_since2022.csv"
+TOP6_DATA_FILE    = _APP_DIR / "data/sports/processed/top6_matches_odds_since2022.csv"
+PLAYER_STATS_FILE = _APP_DIR / "data/sports/processed/player_stats.csv"
 
 # Background-refresh log / metadata files (all gitignored via data/sports/processed/*)
-MATCHES_LOG_FILE = Path("data/sports/processed/refresh_matches.log")
-PLAYERS_LOG_FILE = Path("data/sports/processed/refresh_players.log")
-METADATA_FILE    = Path("data/sports/processed/refresh_metadata.json")
+MATCHES_LOG_FILE = _APP_DIR / "data/sports/processed/refresh_matches.log"
+PLAYERS_LOG_FILE = _APP_DIR / "data/sports/processed/refresh_players.log"
+METADATA_FILE    = _APP_DIR / "data/sports/processed/refresh_metadata.json"
 
 # Leagues we support — filters out stale Eredivisie rows still present in old CSVs
 SUPPORTED_LEAGUES: frozenset[str] = frozenset({
@@ -1096,6 +1100,182 @@ def _get_player_score_picks(
     return picks
 
 
+def _pick_context(
+    historical: pd.DataFrame,
+    home_team: str,
+    away_team: str,
+    market: str,
+    pick_label: str,
+    league_name: str,
+    as_of_ts: pd.Timestamp,
+    n: int = 5,
+) -> str:
+    """Return a short, human-readable stats sentence for a (match, market, pick) leg.
+
+    Used to populate the 'Context' column in the ticket table so users can
+    understand *why* a pick was suggested.
+    """
+    min_date = as_of_ts - pd.Timedelta(days=3 * 365)
+    hist = historical.loc[
+        (historical["league_name"] == league_name)
+        & (historical["match_date"] >= min_date)
+        & (historical["match_date"] < as_of_ts)
+    ]
+    m = market.lower()
+
+    # Recent form helpers
+    home_h = hist.loc[hist["home_team"] == home_team].tail(n)   # home team at home
+    away_a = hist.loc[hist["away_team"] == away_team].tail(n)   # away team away
+
+    def _avg(df: pd.DataFrame, col: str) -> float | None:
+        if df.empty or col not in df.columns:
+            return None
+        return float(pd.to_numeric(df[col], errors="coerce").fillna(0).mean())
+
+    # ── 1X2 / 1st Half Result ────────────────────────────────────────────────
+    if "1x2" in m or "1st half result" in m:
+        use_ft = "1x2" in m
+        res_col = "result_ft"
+        w_h, d_h, l_h = "H", "D", "A"
+
+        if not home_h.empty and res_col in home_h.columns:
+            hw = int((home_h[res_col] == w_h).sum())
+            hd = int((home_h[res_col] == d_h).sum())
+            hl = int((home_h[res_col] == l_h).sum())
+            h_str = f"{home_team} home (L{len(home_h)}): {hw}W {hd}D {hl}L"
+        else:
+            h_str = f"{home_team}: no recent data"
+
+        if not away_a.empty and res_col in away_a.columns:
+            aw = int((away_a[res_col] == l_h).sum())  # away win = "A"
+            ad = int((away_a[res_col] == d_h).sum())
+            al = int((away_a[res_col] == w_h).sum())
+            a_str = f"{away_team} away (L{len(away_a)}): {aw}W {ad}D {al}L"
+        else:
+            a_str = f"{away_team}: no recent data"
+
+        return f"{h_str}  ·  {a_str}"
+
+    # ── Corners ──────────────────────────────────────────────────────────────
+    if "corners" in m:
+        hc = _avg(home_h, "home_corners")
+        ac_h = _avg(home_h, "away_corners")
+        hc_a = _avg(away_a, "home_corners")
+        ac = _avg(away_a, "away_corners")
+        parts: list[str] = []
+        if hc is not None and ac_h is not None and len(home_h) > 0:
+            parts.append(f"Avg {hc + ac_h:.1f} total corners in {home_team}'s home games (L{len(home_h)})")
+        if hc_a is not None and ac is not None and len(away_a) > 0:
+            parts.append(f"{hc_a + ac:.1f} in {away_team}'s away games (L{len(away_a)})")
+        return "  ·  ".join(parts) if parts else "No corner data available"
+
+    # ── Cards ────────────────────────────────────────────────────────────────
+    if "cards" in m:
+        def _cards_avg(df: pd.DataFrame) -> float | None:
+            if df.empty:
+                return None
+            yh = pd.to_numeric(df.get("home_yellow_cards", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            ya = pd.to_numeric(df.get("away_yellow_cards", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            rh = pd.to_numeric(df.get("home_red_cards",    pd.Series(dtype=float)), errors="coerce").fillna(0)
+            ra = pd.to_numeric(df.get("away_red_cards",    pd.Series(dtype=float)), errors="coerce").fillna(0)
+            return float((yh + ya + rh + ra).mean())
+        h_avg = _cards_avg(home_h)
+        a_avg = _cards_avg(away_a)
+        parts = []
+        if h_avg is not None and len(home_h) > 0:
+            parts.append(f"Avg {h_avg:.1f} cards in {home_team}'s home games (L{len(home_h)})")
+        if a_avg is not None and len(away_a) > 0:
+            parts.append(f"{a_avg:.1f} in {away_team}'s away games (L{len(away_a)})")
+        return "  ·  ".join(parts) if parts else "No card data available"
+
+    # ── Goals O/U ────────────────────────────────────────────────────────────
+    if "goals" in m and "half" not in m:
+        hg_h = _avg(home_h, "home_goals_ft")
+        ag_h = _avg(home_h, "away_goals_ft")
+        hg_a = _avg(away_a, "home_goals_ft")
+        ag_a = _avg(away_a, "away_goals_ft")
+        parts = []
+        if hg_h is not None and ag_h is not None and len(home_h) > 0:
+            parts.append(f"Avg {hg_h + ag_h:.1f} goals in {home_team}'s home games (L{len(home_h)})")
+        if hg_a is not None and ag_a is not None and len(away_a) > 0:
+            parts.append(f"{hg_a + ag_a:.1f} in {away_team}'s away games (L{len(away_a)})")
+        return "  ·  ".join(parts) if parts else "No goal data available"
+
+    # ── 1st Half Goals ────────────────────────────────────────────────────────
+    if "1st half goals" in m:
+        hh = _avg(home_h, "home_goals_ht")
+        ah = _avg(home_h, "away_goals_ht")
+        parts = []
+        if hh is not None and ah is not None and len(home_h) > 0:
+            parts.append(f"Avg {hh + ah:.1f} HT goals in {home_team}'s home games (L{len(home_h)})")
+        if not parts:
+            return "No HT data yet — run Refresh Data to fetch HTHG/HTAG"
+        return "  ·  ".join(parts)
+
+    # ── 2nd Half Goals ────────────────────────────────────────────────────────
+    if "2nd half goals" in m:
+        if "home_goals_ht" in home_h.columns and "home_goals_ft" in home_h.columns and len(home_h) > 0:
+            sh = (
+                (pd.to_numeric(home_h["home_goals_ft"], errors="coerce").fillna(0)
+                 - pd.to_numeric(home_h["home_goals_ht"], errors="coerce").fillna(0)).clip(lower=0)
+                + (pd.to_numeric(home_h["away_goals_ft"], errors="coerce").fillna(0)
+                   - pd.to_numeric(home_h["away_goals_ht"], errors="coerce").fillna(0)).clip(lower=0)
+            ).mean()
+            return f"Avg {sh:.1f} 2nd-half goals in {home_team}'s home games (L{len(home_h)})"
+        return "No HT data yet — run Refresh Data"
+
+    # ── BTTS ─────────────────────────────────────────────────────────────────
+    if "btts" in m:
+        def _btts(df: pd.DataFrame) -> float | None:
+            if df.empty or "home_goals_ft" not in df.columns:
+                return None
+            hg = pd.to_numeric(df["home_goals_ft"], errors="coerce").fillna(0)
+            ag = pd.to_numeric(df["away_goals_ft"], errors="coerce").fillna(0)
+            return float(((hg > 0) & (ag > 0)).mean())
+        all_h = hist.loc[(hist["home_team"] == home_team) | (hist["away_team"] == home_team)].tail(n)
+        all_a = hist.loc[(hist["home_team"] == away_team) | (hist["away_team"] == away_team)].tail(n)
+        parts = []
+        r = _btts(all_h)
+        if r is not None and len(all_h) > 0:
+            parts.append(f"BTTS in {r:.0%} of {home_team}'s matches (L{len(all_h)})")
+        r = _btts(all_a)
+        if r is not None and len(all_a) > 0:
+            parts.append(f"{r:.0%} of {away_team}'s (L{len(all_a)})")
+        return "  ·  ".join(parts) if parts else "No BTTS data"
+
+    # ── Score First ───────────────────────────────────────────────────────────
+    if "score first" in m:
+        if "home_goals_ht" in home_h.columns and len(home_h) > 0:
+            hth = pd.to_numeric(home_h["home_goals_ht"], errors="coerce").fillna(0)
+            ath = pd.to_numeric(home_h["away_goals_ht"], errors="coerce").fillna(0)
+            total = hth + ath
+            valid = total > 0
+            if valid.any():
+                home_first_rate = float((hth[valid] / total[valid]).mean())
+                return (f"{home_team} home HT scoring share: {home_first_rate:.0%} "
+                        f"(proxy for scoring first, L{valid.sum()})")
+        return "Score First proxy via HT goal share — no recent data"
+
+    # ── Win Both Halves ───────────────────────────────────────────────────────
+    if "win both" in m:
+        if "home_goals_ht" in home_h.columns and "home_goals_ft" in home_h.columns and len(home_h) > 0:
+            wins = 0
+            for _, r in home_h.iterrows():
+                hth = float(pd.to_numeric(r.get("home_goals_ht", 0), errors="coerce") or 0)
+                ath = float(pd.to_numeric(r.get("away_goals_ht", 0), errors="coerce") or 0)
+                htf = float(pd.to_numeric(r.get("home_goals_ft", 0), errors="coerce") or 0)
+                atf = float(pd.to_numeric(r.get("away_goals_ft", 0), errors="coerce") or 0)
+                wins += int(hth > ath and max(0, htf - hth) > max(0, atf - ath))
+            return f"{home_team} won both halves in {wins}/{len(home_h)} recent home games"
+        return "Win Both Halves — no HT data yet (run Refresh Data)"
+
+    # ── Player to Score ───────────────────────────────────────────────────────
+    if "score:" in pick_label.lower():
+        return f"Poisson model · season goals/matches rate → P(scores) = 1−e^(−rate)"
+
+    return ""
+
+
 def estimate_market_proba(
     historical: pd.DataFrame,
     home_team: str,
@@ -1255,6 +1435,7 @@ def _build_tickets(
     _COLS = [
         "ticket_num", "leg_num", "match", "market", "pick_label",
         "model_prob", "odds", "combined_odds", "hit_probability", "expected_roi",
+        "context",
     ]
     _EMPTY = pd.DataFrame(columns=_COLS)
 
@@ -1318,6 +1499,7 @@ def _build_tickets(
                     "combined_odds":   round(combined_odds, 2),
                     "hit_probability": round(hit_prob, 4),
                     "expected_roi":    round(ev, 4),
+                    "context":         str(pick.get("context", "")),
                 })
 
         return pd.DataFrame(rows, columns=_COLS) if rows else _EMPTY.copy()
@@ -1338,7 +1520,7 @@ def _render_ticket_table(tier_df: pd.DataFrame) -> pd.DataFrame:
     """
     _DISPLAY_COLS = [
         "Ticket", "Match", "Market", "Pick", "Prob", "Odds",
-        "Combo Odds", "Hit %", "xROI",
+        "Combo Odds", "Hit %", "xROI", "📋 Context",
     ]
     if tier_df.empty:
         return pd.DataFrame(columns=_DISPLAY_COLS)
@@ -1361,6 +1543,7 @@ def _render_ticket_table(tier_df: pd.DataFrame) -> pd.DataFrame:
                 "Combo Odds": f"{leg['combined_odds']:.2f}" if is_last else "",
                 "Hit %":      f"{leg['hit_probability']:.1%}" if is_last else "",
                 "xROI":       f"{leg['expected_roi']:+.1%}" if is_last else "",
+                "📋 Context": str(leg.get("context", "")),
             })
         if t_num < n_tickets:
             rows.append({col: "" for col in _DISPLAY_COLS})
@@ -2332,6 +2515,18 @@ def main() -> None:
                                         def _add_pick(label: str, prob: float, _mkt: str = market) -> None:
                                             p = float(np.clip(prob, 0.01, 0.99))
                                             oddsv = round(max(1.01, (1 / p) * (1 - margin)), 2)
+                                            try:
+                                                ctx = _pick_context(
+                                                    context["historical"],
+                                                    home_t,
+                                                    away_t,
+                                                    _mkt,
+                                                    label,
+                                                    league_n,
+                                                    context["as_of_ts"],
+                                                )
+                                            except Exception:
+                                                ctx = ""
                                             pick_records.append({
                                                 "match_id":     mid,
                                                 "match":        match_lbl,
@@ -2342,6 +2537,7 @@ def main() -> None:
                                                 "odds":         oddsv,
                                                 "edge":         p - 1.0 / oddsv,
                                                 "expected_roi": p * oddsv - 1.0,
+                                                "context":      ctx,
                                             })
 
                                         # ── 1X2 via XGBoost ──────────────────

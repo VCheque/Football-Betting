@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 
-METADATA_FILE = Path("data/sports/processed/refresh_metadata.json")
+_HERE = Path(__file__).resolve().parent.parent  # repo root
+METADATA_FILE = _HERE / "data/sports/processed/refresh_metadata.json"
 
 
 def _update_metadata(key: str, records: int, source: str, meta_path: Path = METADATA_FILE) -> None:
