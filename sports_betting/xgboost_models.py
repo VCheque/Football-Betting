@@ -154,11 +154,20 @@ def build_match_training_data(
     injuries_df: pd.DataFrame | None = None,
     lineup_strength_map: dict[str, float] | None = None,
     window: int = 5,
+    max_training_years: int = 5,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     df = historical.copy()
     df = df.loc[df["result_ft"].isin(["H", "D", "A"])].copy()
     df["match_date"] = pd.to_datetime(df["match_date"], errors="coerce")
     df = df.loc[df["match_date"].notna()].sort_values(["match_date", "league_code"]).reset_index(drop=True)
+
+    # ── Speed optimisation: cap training rows to recent seasons ─────────────
+    # Sample-weights already decay with exp(-age/500 days); data >5 years old
+    # contributes <3% weight.  Slicing to 5 years cuts the itertuples loop from
+    # ~41 K rows to ~10 K rows with no meaningful accuracy loss.
+    if max_training_years > 0 and not df.empty:
+        cutoff = df["match_date"].max() - pd.DateOffset(years=max_training_years)
+        df = df.loc[df["match_date"] >= cutoff].reset_index(drop=True)
 
     for col in (
         "home_goals_ft",
@@ -175,6 +184,8 @@ def build_match_training_data(
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
     injuries_df = injuries_df.copy() if injuries_df is not None else pd.DataFrame()
+    # ── Pre-index injuries by team so the inner loop is O(1) ────────────────
+    _injury_by_team: dict[str, pd.DataFrame] = {}
     if not injuries_df.empty:
         date_col = "date" if "date" in injuries_df.columns else "report_date" if "report_date" in injuries_df.columns else None
         team_col = "team" if "team" in injuries_df.columns else "team_name" if "team_name" in injuries_df.columns else None
@@ -185,6 +196,8 @@ def build_match_training_data(
             injuries_df["importance_score"] = pd.to_numeric(injuries_df["importance_score"], errors="coerce").fillna(1.0)
             injuries_df = injuries_df.loc[injuries_df[date_col].notna()].copy()
             injuries_df = injuries_df.rename(columns={date_col: "injury_date", team_col: "team"})
+            for _team, _grp in injuries_df.groupby("team"):
+                _injury_by_team[str(_team)] = _grp.reset_index(drop=True)
         else:
             injuries_df = pd.DataFrame()
 
@@ -213,19 +226,15 @@ def build_match_training_data(
         h2h_gap, h2h_gd = _h2h_summary(h2h_state[pair_key], home, away, mdate)
 
         injury_gap = 0.0
-        if not injuries_df.empty:
+        if _injury_by_team:
             one_week = mdate - pd.Timedelta(days=7)
-            home_inj = injuries_df.loc[
-                (injuries_df["team"] == home)
-                & (injuries_df["injury_date"] <= mdate)
-                & (injuries_df["injury_date"] >= one_week)
-            ]["importance_score"].sum()
-            away_inj = injuries_df.loc[
-                (injuries_df["team"] == away)
-                & (injuries_df["injury_date"] <= mdate)
-                & (injuries_df["injury_date"] >= one_week)
-            ]["importance_score"].sum()
-            injury_gap = float(away_inj - home_inj)
+            def _inj_score(team: str) -> float:
+                grp = _injury_by_team.get(team)
+                if grp is None:
+                    return 0.0
+                mask = (grp["injury_date"] >= one_week) & (grp["injury_date"] <= mdate)
+                return float(grp.loc[mask, "importance_score"].sum())
+            injury_gap = float(_inj_score(away) - _inj_score(home))
 
         lineup_strength_map = lineup_strength_map or {}
         lineup_strength_gap = float(lineup_strength_map.get(home, 0.0) - lineup_strength_map.get(away, 0.0))
@@ -320,13 +329,15 @@ def train_match_model(
     model = XGBClassifier(
         objective="multi:softprob",
         num_class=3,
-        n_estimators=260,
+        n_estimators=100,       # 13 features → 100 trees is ample; was 260
         max_depth=4,
-        learning_rate=0.05,
+        learning_rate=0.08,     # slightly higher lr compensates fewer trees
         subsample=0.9,
         colsample_bytree=0.9,
         reg_lambda=1.0,
         eval_metric="mlogloss",
+        tree_method="hist",     # fastest CPU algorithm
+        n_jobs=-1,              # use all available cores
         random_state=42,
     )
     model.fit(X[MATCH_FEATURE_COLS], y, sample_weight=sample_w)
@@ -383,13 +394,15 @@ def train_player_models(contrib_df: pd.DataFrame) -> PlayerModelBundle | None:
     def _train(y: pd.Series) -> Any:
         model = XGBClassifier(
             objective="binary:logistic",
-            n_estimators=220,
+            n_estimators=80,        # 9 features → 80 trees is ample; was 220
             max_depth=3,
-            learning_rate=0.05,
+            learning_rate=0.08,
             subsample=0.9,
             colsample_bytree=0.9,
             reg_lambda=1.0,
             eval_metric="logloss",
+            tree_method="hist",     # fastest CPU algorithm
+            n_jobs=-1,              # use all available cores
             random_state=42,
         )
         model.fit(X[PLAYER_FEATURE_COLS], y, sample_weight=sample_w)
