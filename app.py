@@ -292,8 +292,12 @@ def apply_style() -> None:
         }
         .metric p, .metric span, .metric div { color: var(--ink) !important; }
 
-        /* ── Subheader accent line (main content only) ── */
-        .main h2::after, .main h3::after {
+        /* ── Subheader accent lines — main content only ── */
+        /* Streamlit 1.30-1.45: main area is .main > .block-container          or [data-testid="stMain"] > .block-container */
+        .main .block-container h2::after,
+        .main .block-container h3::after,
+        [data-testid="stMain"] h2::after,
+        [data-testid="stMain"] h3::after {
           content: '';
           display: block;
           margin-top: 6px;
@@ -302,67 +306,79 @@ def apply_style() -> None:
           background: var(--accent);
           border-radius: 2px;
         }
-        /* Never add accent lines inside sidebar — they push adjacent widgets */
-        [data-testid="stSidebar"] h1::after,
-        [data-testid="stSidebar"] h2::after,
-        [data-testid="stSidebar"] h3::after {
+        /* Nuke all pseudo-elements inside the sidebar — belt AND suspenders */
+        [data-testid="stSidebar"] *::before,
+        [data-testid="stSidebar"] *::after,
+        [data-testid="stSidebarContent"] *::before,
+        [data-testid="stSidebarContent"] *::after {
           display: none !important;
+          content: none !important;
         }
 
-        /* ── Widget labels: allow wrapping in narrow columns ── */
+        /* ── Widget labels: wrap gracefully in narrow columns ── */
+        /* Streamlit 1.35+ uses stWidgetLabel; older uses direct <label> */
         [data-testid="stWidgetLabel"] p,
         [data-testid="stWidgetLabel"] label,
-        label[data-testid] {
+        .stSlider     label,
+        .stNumberInput label,
+        .stTextInput  label,
+        .stDateInput  label,
+        .stSelectbox  label,
+        .stMultiSelect label {
           white-space: normal !important;
           overflow: visible !important;
           line-height: 1.4 !important;
         }
 
-        /* ── Sliders: add room so thumb tooltip never overlaps the label ── */
-        [data-testid="stSlider"] {
-          padding-top: 0.15rem !important;
-          margin-bottom: 0.5rem !important;
+        /* ── Sliders: separate label from thumb-value tooltip ── */
+        /* The thumb tooltip is positioned absolute ~20 px above the track,
+           inside [data-baseweb="slider"].  Adding padding-bottom to the
+           label container opens a gap so the tooltip never covers the text. */
+        [data-testid="stSlider"],
+        .stSlider {
+          margin-bottom: 0.75rem !important;
         }
-        [data-testid="stSlider"] > label {
-          margin-bottom: 0.6rem !important;
+        [data-testid="stSlider"] [data-testid="stWidgetLabel"],
+        .stSlider [data-testid="stWidgetLabel"] {
+          padding-bottom: 1.6rem !important; /* room for floating tooltip */
         }
-        /* Keep thumb tooltip above the track, not over the label */
-        [data-testid="stSlider"] [data-baseweb="slider"] {
-          margin-top: 0.4rem !important;
-        }
-
-        /* ── Sidebar: extra vertical breathing room between widgets ── */
-        [data-testid="stSidebar"] > div:first-child {
-          padding-top: 1.5rem !important;
-        }
-        [data-testid="stSidebar"] [data-testid="element-container"] + [data-testid="element-container"] {
-          margin-top: 0.1rem !important;
-        }
-        [data-testid="stSidebar"] hr {
-          margin: 0.75rem 0 !important;
+        /* Streamlit 1.45 renders the track wrapper directly under stSlider;
+           push it down so the tooltip clears the label on any viewport */
+        [data-testid="stSlider"] > div:last-child,
+        .stSlider > div:last-child {
+          margin-top: 0.2rem !important;
         }
 
-        /* ── Tabs: flexible height so labels never get clipped ── */
+        /* ── Sidebar vertical breathing room ── */
+        [data-testid="stSidebar"] hr,
+        [data-testid="stSidebarContent"] hr {
+          margin: 0.6rem 0 !important;
+        }
+        /* Stack every widget block with a small gap */
+        [data-testid="stSidebar"] .stVerticalBlock > *,
+        [data-testid="stSidebarContent"] .stVerticalBlock > * {
+          margin-bottom: 0.15rem !important;
+        }
+
+        /* ── Tabs: flexible height — never clip long labels ── */
+        [data-testid="stTabs"] [data-baseweb="tab-list"] {
+          flex-wrap: wrap !important;   /* allow tabs to wrap on small screens */
+        }
         [data-testid="stTabs"] [data-baseweb="tab"] {
           height: auto !important;
           min-height: 2.4rem !important;
-          padding: 0.35rem 1.25rem !important;
+          padding: 0.35rem 1rem !important;
           white-space: nowrap !important;
         }
 
-        /* ── Multiselect: prevent tags overflowing narrow columns ── */
+        /* ── Multiselect: clip tags cleanly inside narrow columns ── */
         [data-testid="stMultiSelect"] [data-baseweb="tag"] {
           max-width: 100% !important;
         }
-        [data-testid="stMultiSelect"] [data-baseweb="tag"] span {
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] span:first-child {
           overflow: hidden !important;
           text-overflow: ellipsis !important;
-        }
-
-        /* ── Number / date inputs in sidebar: prevent label/input overlap ── */
-        [data-testid="stSidebar"] [data-testid="stNumberInput"],
-        [data-testid="stSidebar"] [data-testid="stDateInput"] {
-          margin-top: 0.25rem !important;
+          max-width: calc(100% - 1.5rem) !important;
         }
 
         /* ── Scrollbar ── */
@@ -557,7 +573,10 @@ def build_context(
     df = load_data(data_path)
     known = df["result_ft"].isin(RESULT_VALUES)
     as_of_ts = parse_date(as_of_date.isoformat())
-    historical = df.loc[known & (df["match_date"] < as_of_ts)].copy()
+    # Include matches played on as_of_date itself (e.g. a 3pm kick-off on today's
+    # date would be stored as midnight of that date, which the strict < would miss).
+    _hist_cutoff = as_of_ts + pd.Timedelta(days=1)
+    historical = df.loc[known & (df["match_date"] < _hist_cutoff)].copy()
     if historical.empty:
         return {}, "No historical matches available before selected as-of date."
 
@@ -733,11 +752,14 @@ def team_last5_form(
     as_of_ts: pd.Timestamp,
     n: int = 5,
 ) -> str:
-    """Return a coloured W/D/L form string for the last N league matches."""
+    """Return a W/D/L form string for the last N matches across all competitions.
+
+    The `historical` DataFrame is already date-bounded by build_context so no
+    extra date filter is needed here.  The league filter is intentionally dropped
+    so a loss in the cup or Champions League is reflected in the form string.
+    """
     rows = historical.loc[
-        (historical["league_name"] == league_name)
-        & (historical["result_ft"].isin(RESULT_VALUES))
-        & (historical["match_date"] < as_of_ts)
+        (historical["result_ft"].isin(RESULT_VALUES))
         & ((historical["home_team"] == team) | (historical["away_team"] == team))
     ].sort_values("match_date", ascending=True).tail(n)
 
