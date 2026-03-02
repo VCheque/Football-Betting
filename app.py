@@ -292,8 +292,8 @@ def apply_style() -> None:
         }
         .metric p, .metric span, .metric div { color: var(--ink) !important; }
 
-        /* ── Subheader accent line ── */
-        h2::after {
+        /* ── Subheader accent line (main content only) ── */
+        .main h2::after, .main h3::after {
           content: '';
           display: block;
           margin-top: 6px;
@@ -301,6 +301,68 @@ def apply_style() -> None:
           width: 40px;
           background: var(--accent);
           border-radius: 2px;
+        }
+        /* Never add accent lines inside sidebar — they push adjacent widgets */
+        [data-testid="stSidebar"] h1::after,
+        [data-testid="stSidebar"] h2::after,
+        [data-testid="stSidebar"] h3::after {
+          display: none !important;
+        }
+
+        /* ── Widget labels: allow wrapping in narrow columns ── */
+        [data-testid="stWidgetLabel"] p,
+        [data-testid="stWidgetLabel"] label,
+        label[data-testid] {
+          white-space: normal !important;
+          overflow: visible !important;
+          line-height: 1.4 !important;
+        }
+
+        /* ── Sliders: add room so thumb tooltip never overlaps the label ── */
+        [data-testid="stSlider"] {
+          padding-top: 0.15rem !important;
+          margin-bottom: 0.5rem !important;
+        }
+        [data-testid="stSlider"] > label {
+          margin-bottom: 0.6rem !important;
+        }
+        /* Keep thumb tooltip above the track, not over the label */
+        [data-testid="stSlider"] [data-baseweb="slider"] {
+          margin-top: 0.4rem !important;
+        }
+
+        /* ── Sidebar: extra vertical breathing room between widgets ── */
+        [data-testid="stSidebar"] > div:first-child {
+          padding-top: 1.5rem !important;
+        }
+        [data-testid="stSidebar"] [data-testid="element-container"] + [data-testid="element-container"] {
+          margin-top: 0.1rem !important;
+        }
+        [data-testid="stSidebar"] hr {
+          margin: 0.75rem 0 !important;
+        }
+
+        /* ── Tabs: flexible height so labels never get clipped ── */
+        [data-testid="stTabs"] [data-baseweb="tab"] {
+          height: auto !important;
+          min-height: 2.4rem !important;
+          padding: 0.35rem 1.25rem !important;
+          white-space: nowrap !important;
+        }
+
+        /* ── Multiselect: prevent tags overflowing narrow columns ── */
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] {
+          max-width: 100% !important;
+        }
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] span {
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+        }
+
+        /* ── Number / date inputs in sidebar: prevent label/input overlap ── */
+        [data-testid="stSidebar"] [data-testid="stNumberInput"],
+        [data-testid="stSidebar"] [data-testid="stDateInput"] {
+          margin-top: 0.25rem !important;
         }
 
         /* ── Scrollbar ── */
@@ -2524,7 +2586,7 @@ def main() -> None:
                                     for market in bb_markets:
 
                                         def _add_pick(label: str, prob: float, _mkt: str = market) -> None:
-                                            p = float(np.clip(prob, 0.01, 0.99))
+                                            p = float(np.clip(prob * 0.85, 0.01, 0.99))
                                             oddsv = round(max(1.01, (1 / p) * (1 - margin)), 2)
                                             try:
                                                 ctx = _pick_context(
