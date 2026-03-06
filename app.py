@@ -34,6 +34,16 @@ from sports_betting.generate_bet_combinations import (
     parse_date,
     player_match_insights,
 )
+from sports_betting.fetch_top6_data import (
+    DEFAULT_TOP6,
+    PORTUGAL,
+    build_dataset,
+    infer_default_start_season,
+    infer_latest_season_start,
+    normalize_clean,
+    save_outputs,
+    _update_metadata,
+)
 from sports_betting.xgboost_models import (
     CLASS_TO_RESULT,
     MATCH_FEATURE_COLS,
@@ -51,10 +61,35 @@ DEFAULT_DATA_FILE = _APP_DIR / "data/sports/processed/top6_plus_portugal_matches
 TOP6_DATA_FILE    = _APP_DIR / "data/sports/processed/top6_matches_odds_since2022.csv"
 PLAYER_STATS_FILE = _APP_DIR / "data/sports/processed/player_stats.csv"
 
-# Background-refresh log / metadata files (all gitignored via data/sports/processed/*)
+# Background-refresh log / metadata files
 MATCHES_LOG_FILE = _APP_DIR / "data/sports/processed/refresh_matches.log"
 PLAYERS_LOG_FILE = _APP_DIR / "data/sports/processed/refresh_players.log"
 METADATA_FILE    = _APP_DIR / "data/sports/processed/refresh_metadata.json"
+
+
+def _fetch_data_sync(output_dir: Path, status_fn=None) -> str:
+    """Download match data synchronously from football-data.co.uk.
+
+    Called when the processed CSV is missing (e.g. fresh Streamlit Cloud deploy).
+    Returns an empty string on success or an error message on failure.
+    """
+    today = date.today()
+    start_season = infer_default_start_season(today)  # ~2006
+    end_season   = infer_latest_season_start(today)
+    leagues = DEFAULT_TOP6 + (PORTUGAL,)
+    prefix  = "top6_plus_portugal"
+
+    try:
+        if status_fn:
+            status_fn(f"Downloading {len(leagues)} leagues × {end_season - start_season + 1} seasons…")
+        raw_df = build_dataset(leagues=leagues, start_season=start_season, end_season=end_season)
+        min_date = pd.Timestamp(f"{start_season}-01-01")
+        clean_df = normalize_clean(raw_df, min_date)
+        save_outputs(raw_df, clean_df, output_dir, prefix)
+        _update_metadata("matches", len(clean_df), "football-data.co.uk")
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
 
 # Leagues we support — filters out stale Eredivisie rows still present in old CSVs
 SUPPORTED_LEAGUES: frozenset[str] = frozenset({
@@ -1790,7 +1825,31 @@ def main() -> None:
             str(injuries_file), str(contrib_file), str(other_file),
         )
     if err:
-        st.warning(err)
+        # ── First-run setup: offer to download data from football-data.co.uk ──
+        is_missing = "not found" in err.lower() or "no such file" in err.lower()
+        if is_missing:
+            st.title("⚽ Football Bets — First-time Setup")
+            st.info(
+                "The match dataset is not present yet. "
+                "Click the button below to download it from "
+                "[football-data.co.uk](https://www.football-data.co.uk) "
+                "(free, no login required). This takes about 30–60 seconds.",
+                icon="📥",
+            )
+            if st.button("⬇️ Download match data now", type="primary"):
+                _out_dir = DEFAULT_DATA_FILE.parent.parent  # data/sports/
+                with st.spinner("Downloading match data from football-data.co.uk…"):
+                    fetch_err = _fetch_data_sync(
+                        _out_dir,
+                        status_fn=lambda msg: st.toast(msg),
+                    )
+                if fetch_err:
+                    st.error(f"Download failed: {fetch_err}")
+                else:
+                    st.success("Data downloaded successfully! Reloading…")
+                    st.rerun()
+        else:
+            st.error(f"Could not load data: {err}")
         st.stop()
 
     try:

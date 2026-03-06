@@ -15,9 +15,12 @@ env/
 # Raw downloads (can be 25+ MB each) — keep .gitkeep for directory skeleton
 data/sports/raw/*
 !data/sports/raw/.gitkeep
-# Processed outputs (regenerated from raw)
+# Processed outputs: CSVs are committed so Streamlit Cloud can serve the app
+# without requiring a runtime data-fetch step on every cold start.
 data/sports/processed/*
 !data/sports/processed/.gitkeep
+!data/sports/processed/*.csv
+!data/sports/processed/*.json
 # Bet output files (generated per run)
 data/sports/outputs/*
 !data/sports/outputs/.gitkeep
