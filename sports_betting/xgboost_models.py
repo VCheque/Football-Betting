@@ -319,6 +319,7 @@ def train_match_model(
         injuries_df=injuries_df,
         lineup_strength_map=lineup_strength_map,
         window=5,
+        max_training_years=3,   # 3 yrs ≈ 6 K rows; sample-weight gives <1% to older data
     )
 
     if len(X) < 300 or y.nunique() < 3:
@@ -329,15 +330,15 @@ def train_match_model(
     model = XGBClassifier(
         objective="multi:softprob",
         num_class=3,
-        n_estimators=100,       # 13 features → 100 trees is ample; was 260
-        max_depth=4,
-        learning_rate=0.08,     # slightly higher lr compensates fewer trees
+        n_estimators=60,        # 13 features; 60 trees sufficient, faster on cloud
+        max_depth=3,            # shallower → faster; enough for this feature set
+        learning_rate=0.10,
         subsample=0.9,
         colsample_bytree=0.9,
         reg_lambda=1.0,
         eval_metric="mlogloss",
-        tree_method="hist",     # fastest CPU algorithm
-        n_jobs=-1,              # use all available cores
+        tree_method="hist",
+        n_jobs=1,               # single thread avoids overhead on shared cloud CPU
         random_state=42,
     )
     model.fit(X[MATCH_FEATURE_COLS], y, sample_weight=sample_w)
@@ -394,15 +395,15 @@ def train_player_models(contrib_df: pd.DataFrame) -> PlayerModelBundle | None:
     def _train(y: pd.Series) -> Any:
         model = XGBClassifier(
             objective="binary:logistic",
-            n_estimators=80,        # 9 features → 80 trees is ample; was 220
+            n_estimators=40,        # 9 features; 40 trees fast on cloud
             max_depth=3,
-            learning_rate=0.08,
+            learning_rate=0.10,
             subsample=0.9,
             colsample_bytree=0.9,
             reg_lambda=1.0,
             eval_metric="logloss",
-            tree_method="hist",     # fastest CPU algorithm
-            n_jobs=-1,              # use all available cores
+            tree_method="hist",
+            n_jobs=1,               # single thread on shared cloud CPU
             random_state=42,
         )
         model.fit(X[PLAYER_FEATURE_COLS], y, sample_weight=sample_w)
