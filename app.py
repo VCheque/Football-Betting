@@ -1825,32 +1825,18 @@ def main() -> None:
             str(injuries_file), str(contrib_file), str(other_file),
         )
     if err:
-        # ── First-run setup: offer to download data from football-data.co.uk ──
         is_missing = "not found" in err.lower() or "no such file" in err.lower()
         if is_missing:
-            st.title("⚽ Football Bets — First-time Setup")
-            st.info(
-                "The match dataset is not present yet. "
-                "Click the button below to download it from "
-                "[football-data.co.uk](https://www.football-data.co.uk) "
-                "(free, no login required). This takes about 30–60 seconds.",
-                icon="📥",
-            )
-            if st.button("⬇️ Download match data now", type="primary"):
-                _out_dir = DEFAULT_DATA_FILE.parent.parent  # data/sports/
-                with st.spinner("Downloading match data from football-data.co.uk…"):
-                    fetch_err = _fetch_data_sync(
-                        _out_dir,
-                        status_fn=lambda msg: st.toast(msg),
-                    )
-                if fetch_err:
-                    st.error(f"Download failed: {fetch_err}")
-                else:
-                    st.success("Data downloaded successfully! Reloading…")
-                    st.rerun()
+            # Auto-fetch transparently — user only sees a loading spinner
+            with st.spinner("Loading match data…"):
+                fetch_err = _fetch_data_sync(DEFAULT_DATA_FILE.parent.parent)
+            if fetch_err:
+                st.error(f"Could not load match data: {fetch_err}")
+                st.stop()
+            st.rerun()
         else:
             st.error(f"Could not load data: {err}")
-        st.stop()
+            st.stop()
 
     try:
         with st.spinner("Training models…"):
