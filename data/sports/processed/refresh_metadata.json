@@ -1,8 +1,8 @@
 {
-  "players_last_fetch": "2026-03-06T18:17:51",
-  "players_records": 2624,
+  "players_last_fetch": "2026-03-08T14:25:24",
+  "players_records": 2631,
   "players_source": "Understat",
-  "matches_last_fetch": "2026-03-06T18:18:13",
-  "matches_records": 9849,
+  "matches_last_fetch": "2026-03-08T14:27:17",
+  "matches_records": 40960,
   "matches_source": "football-data.co.uk"
 }

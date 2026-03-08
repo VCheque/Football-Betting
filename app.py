@@ -112,6 +112,8 @@ ESPN_LEAGUE_SLUGS: dict[str, str] = {
 }
 
 _STALE_HOURS = 2.0   # auto-refresh threshold
+_AUTO_REFRESH_CHECK_EVERY_MINUTES = 15
+_AUTO_REFRESH_TRIGGER_COOLDOWN_MINUTES = 30
 
 MARKET_OPTIONS = [
     "1X2",
@@ -144,6 +146,240 @@ LEAGUE_API_IDS: dict[str, int] = {
     "Ligue 1": 61,
     "Primeira Liga": 94,
 }
+
+LANGUAGE_OPTIONS: dict[str, str] = {
+    "en": "🇺🇸 EN",
+    "pt_mz": "🇲🇿 PT",
+}
+
+UI_I18N: dict[str, dict[str, str]] = {
+    "app_title": {"en": "Football Bets Tool", "pt_mz": "Ferramenta de Apostas de Futebol"},
+    "app_caption": {"en": "Match intelligence · League standings · Player probabilities", "pt_mz": "Inteligência de jogos · Classificações · Probabilidades de jogadores"},
+    "responsible_use_notice": {
+        "en": "Betting can be highly addictive. Use caution and bet responsibly. This tool helps with decision-making but does not guarantee outcomes; the final decision is yours, and you alone are responsible for it.",
+        "pt_mz": "Apostar pode ser altamente viciante. Use com cautela e aposte de forma responsável. Esta ferramenta ajuda na tomada de decisão, mas não garante resultados; a decisão final é sua, e apenas você é responsável por ela.",
+    },
+    "tab_bets": {"en": "🎯 Bet Builder", "pt_mz": "🎯 Construtor de Apostas"},
+    "tab_match": {"en": "⚽ Match Center", "pt_mz": "⚽ Centro de Jogo"},
+    "tab_league": {"en": "📊 League & Players", "pt_mz": "📊 Liga e Jogadores"},
+    "lang_label": {"en": "Language", "pt_mz": "Idioma"},
+    "momentum_help": {
+        "en": "Number of recent matches used to compute form, attacking/defensive trends, and momentum features.",
+        "pt_mz": "Número de jogos recentes usados para calcular forma, tendências ofensivas/defensivas e variáveis de momento.",
+    },
+    "settings_header": {"en": "Settings", "pt_mz": "Definições"},
+    "as_of_date": {"en": "As-of date", "pt_mz": "Data de referência"},
+    "momentum_window": {"en": "Momentum window", "pt_mz": "Janela de momento"},
+    "external_files": {"en": "External data files", "pt_mz": "Ficheiros externos de dados"},
+    "injuries_csv": {"en": "Injuries CSV", "pt_mz": "CSV de lesionados"},
+    "contrib_csv": {"en": "Player contributions CSV", "pt_mz": "CSV de contribuições dos jogadores"},
+    "other_comp_csv": {"en": "Other competitions CSV", "pt_mz": "CSV de outras competições"},
+    "api_football": {"en": "API-Football", "pt_mz": "API-Football"},
+    "api_key": {"en": "API key", "pt_mz": "Chave API"},
+    "api_key_help": {
+        "en": (
+            "Optional — used to auto-fetch Starting XI from API-Football.\n\n"
+            "How to get your free key:\n"
+            "1. Go to api-sports.io\n"
+            "2. Click Sign Up → create a free account\n"
+            "3. Open Dashboard → copy your API Key\n"
+            "Free plan: 100 requests/day (no credit card needed)"
+        ),
+        "pt_mz": (
+            "Opcional — usada para buscar automaticamente o XI inicial no API-Football.\n\n"
+            "Como obter a chave gratuita:\n"
+            "1. Vá para api-sports.io\n"
+            "2. Clique em Sign Up e crie conta grátis\n"
+            "3. Abra o Dashboard e copie a chave API\n"
+            "Plano grátis: 100 pedidos/dia (sem cartão)"
+        ),
+    },
+    "refresh_data": {"en": "Refresh Data", "pt_mz": "Atualizar Dados"},
+    "refresh_caption": {
+        "en": "Runs in the background — you can keep using the app. Reload the page once the jobs finish to see updated data.",
+        "pt_mz": "Corre em segundo plano — pode continuar a usar a app. Recarregue a página quando terminar para ver dados atualizados.",
+    },
+    "start_season": {"en": "Start season", "pt_mz": "Época inicial"},
+    "end_season": {"en": "End season", "pt_mz": "Época final"},
+    "min_match_date": {"en": "Min match date", "pt_mz": "Data mínima de jogo"},
+    "refresh_all": {"en": "🔄 Refresh All Data", "pt_mz": "🔄 Atualizar Todos os Dados"},
+    "refresh_started": {"en": "Refresh started at {ts} (match PID {pid_m} · player PID {pid_p})", "pt_mz": "Atualização iniciada às {ts} (jogos PID {pid_m} · jogadores PID {pid_p})."},
+    "last_refresh_started": {"en": "Last refresh started at **{ts}**. Reload the page when jobs complete to see new data.", "pt_mz": "Última atualização iniciada às **{ts}**. Recarregue a página quando os processos terminarem."},
+    "view_refresh_logs": {"en": "📋 View Refresh Logs", "pt_mz": "📋 Ver logs de atualização"},
+    "match_data": {"en": "Match Data", "pt_mz": "Dados de Jogos"},
+    "player_stats": {"en": "Player Stats", "pt_mz": "Estatísticas de jogadores"},
+    "no_match_log": {"en": "No match-data log yet.", "pt_mz": "Ainda não há log de jogos."},
+    "no_player_log": {"en": "No player-stats log yet.", "pt_mz": "Ainda não há log de jogadores."},
+    "last_successful_refresh": {"en": "**Last successful refresh**", "pt_mz": "**Última atualização bem-sucedida**"},
+    "meta_matches": {"en": "📊 Matches: `{matches}`  \n👤 Players: `{players}` ({src})", "pt_mz": "📊 Jogos: `{matches}`  \n👤 Jogadores: `{players}` ({src})"},
+    "auto_refresh_started": {"en": "Data was stale (>2 h) — background refresh started automatically.", "pt_mz": "Dados estavam desatualizados (>2 h) — atualização em segundo plano iniciada automaticamente."},
+    "loading_data": {"en": "Loading data…", "pt_mz": "A carregar dados…"},
+    "loading_match_data": {"en": "Loading match data…", "pt_mz": "A carregar dados de jogos…"},
+    "load_match_error": {"en": "Could not load match data: {err}", "pt_mz": "Não foi possível carregar dados de jogos: {err}"},
+    "load_data_error": {"en": "Could not load data: {err}", "pt_mz": "Não foi possível carregar dados: {err}"},
+    "training_models": {"en": "Training models…", "pt_mz": "A treinar modelos…"},
+    "xgb_fail": {"en": "XGBoost training failed. Install xgboost and retry. Details: {exc}", "pt_mz": "Falha no treino XGBoost. Instale xgboost e tente novamente. Detalhes: {exc}"},
+    "match_center": {"en": "Match Center", "pt_mz": "Centro de Jogo"},
+    "matchup_mode": {"en": "Matchup mode", "pt_mz": "Modo de confronto"},
+    "same_league": {"en": "Same league", "pt_mz": "Mesma liga"},
+    "cross_league": {"en": "Cross-league", "pt_mz": "Ligas diferentes"},
+    "league": {"en": "League", "pt_mz": "Liga"},
+    "home_league": {"en": "Home league", "pt_mz": "Liga da casa"},
+    "away_league": {"en": "Away league", "pt_mz": "Liga visitante"},
+    "no_teams_conf": {"en": "No teams found for the selected league configuration.", "pt_mz": "Não foram encontradas equipas para esta configuração de ligas."},
+    "home_team": {"en": "Home team", "pt_mz": "Equipa da casa"},
+    "away_team": {"en": "Away team", "pt_mz": "Equipa visitante"},
+    "player_intel": {"en": "#### Player Intelligence", "pt_mz": "#### Inteligência de jogadores"},
+    "important_injuries": {"en": "🚑 **Important injuries**", "pt_mz": "🚑 **Lesões importantes**"},
+    "likely_scorers": {"en": "⚽ **Likely scorers**", "pt_mz": "⚽ **Prováveis marcadores**"},
+    "likely_cards": {"en": "🟨 **Likely cards**", "pt_mz": "🟨 **Prováveis cartões**"},
+    "no_injury_data": {"en": "No injury data available.", "pt_mz": "Sem dados de lesões disponíveis."},
+    "no_contrib_data": {"en": "No contribution data available.", "pt_mz": "Sem dados de contribuições disponíveis."},
+    "odds_title": {"en": "#### Odds", "pt_mz": "#### Odds"},
+    "odds_caption": {"en": "Auto-calculated from model (position · form · H2H). Edit freely.", "pt_mz": "Calculadas automaticamente pelo modelo (posição · forma · H2H). Pode editar livremente."},
+    "home_odd": {"en": "Home odd (1)", "pt_mz": "Odd casa (1)"},
+    "draw_odd": {"en": "Draw odd (X)", "pt_mz": "Odd empate (X)"},
+    "away_odd": {"en": "Away odd (2)", "pt_mz": "Odd fora (2)"},
+    "starting_xi": {"en": "Starting XI (optional — fetch online or enter manually)", "pt_mz": "XI inicial (opcional — buscar online ou inserir manualmente)"},
+    "fetch_xi": {"en": "Fetch probable XI online", "pt_mz": "Buscar XI provável online"},
+    "h2h_lookback": {"en": "H2H years look-back", "pt_mz": "Anos de retrospetiva H2H"},
+    "h2h_scope": {"en": "H2H scope", "pt_mz": "Âmbito H2H"},
+    "h2h_all": {"en": "All competitions", "pt_mz": "Todas as competições"},
+    "h2h_domestic": {"en": "Domestic leagues only", "pt_mz": "Apenas ligas domésticas"},
+    "home_big_games": {"en": "{team} big games last 8 days", "pt_mz": "{team} jogos grandes nos últimos 8 dias"},
+    "away_big_games": {"en": "{team} big games last 8 days", "pt_mz": "{team} jogos grandes nos últimos 8 dias"},
+    "run_prediction": {"en": "▶ Run full prediction", "pt_mz": "▶ Executar previsao completa"},
+    "not_enough_train_data": {"en": "Not enough data to train match XGBoost model.", "pt_mz": "Dados insuficientes para treinar o modelo XGBoost de jogo."},
+    "predicted_outcome": {"en": "Predicted outcome: **{outcome}**", "pt_mz": "Resultado previsto: **{outcome}**"},
+    "prob_line": {"en": "Probabilities → 1: {h:.2%} | X: {d:.2%} | 2: {a:.2%}", "pt_mz": "Probabilidades → 1: {h:.2%} | X: {d:.2%} | 2: {a:.2%}"},
+    "key_factors": {"en": "Key factors: {reasons}", "pt_mz": "Fatores principais: {reasons}"},
+    "past_h2h": {"en": "#### Past H2H — last {years} years ({scope})", "pt_mz": "#### H2H passado — últimos {years} anos ({scope})"},
+    "scope_all": {"en": "all competitions", "pt_mz": "todas as competições"},
+    "scope_domestic": {"en": "domestic leagues only", "pt_mz": "apenas ligas domésticas"},
+    "h2h_caption": {"en": "H2H ({scope}): {matches} matches · Home win {home:.1%} · Draw {draw:.1%} · Away win {away:.1%}", "pt_mz": "H2H ({scope}): {matches} jogos · Vitória em casa {home:.1%} · Empate {draw:.1%} · Vitória fora {away:.1%}"},
+    "outcome_h": {"en": "Home Win (1)", "pt_mz": "Vitória em casa (1)"},
+    "outcome_d": {"en": "Draw (X)", "pt_mz": "Empate (X)"},
+    "outcome_a": {"en": "Away Win (2)", "pt_mz": "Vitória fora (2)"},
+    "tier_conservative": {"en": "Conservative", "pt_mz": "Conservador"},
+    "tier_moderate": {"en": "Moderate", "pt_mz": "Moderado"},
+    "tier_high_risk": {"en": "High Risk", "pt_mz": "Risco Alto"},
+    "tip_conservative": {"en": "Highest hit probability. {reasons}", "pt_mz": "Maior probabilidade de acerto. {reasons}"},
+    "tip_moderate": {"en": "Balance between value and probability. {reasons}", "pt_mz": "Equilíbrio entre valor e probabilidade. {reasons}"},
+    "tip_high_risk": {"en": "Higher variance with stronger payout profile. {reasons}", "pt_mz": "Maior variância, com potencial de retorno superior. {reasons}"},
+    "factor_away_fatigue": {"en": "{away} had heavier load recently, increasing fatigue risk", "pt_mz": "{away} teve maior carga recente, aumentando o risco de fadiga"},
+    "factor_home_fatigue": {"en": "{home} had heavier recent load", "pt_mz": "{home} teve maior carga recente"},
+    "factor_away_injury": {"en": "{away} has higher key injury impact", "pt_mz": "{away} tem maior impacto de lesões importantes"},
+    "factor_home_injury": {"en": "{home} has higher key injury impact", "pt_mz": "{home} tem maior impacto de lesões importantes"},
+    "factor_home_attack": {"en": "{home} has stronger recent attacking output", "pt_mz": "{home} tem melhor rendimento ofensivo recente"},
+    "factor_away_attack": {"en": "{away} has stronger recent attacking output", "pt_mz": "{away} tem melhor rendimento ofensivo recente"},
+    "factor_home_h2h": {"en": "Head-to-head trend slightly favors {home}", "pt_mz": "A tendência no confronto direto favorece ligeiramente {home}"},
+    "factor_away_h2h": {"en": "Head-to-head trend slightly favors {away}", "pt_mz": "A tendência no confronto direto favorece ligeiramente {away}"},
+    "factor_balanced": {"en": "Model sees balanced conditions with no dominant contextual edge", "pt_mz": "O modelo vê condições equilibradas, sem vantagem contextual dominante"},
+    "league_players": {"en": "League & Players", "pt_mz": "Liga e Jogadores"},
+    "select_league": {"en": "Select league", "pt_mz": "Selecionar liga"},
+    "standings_title": {"en": "**Standings — {season} season**", "pt_mz": "**Classificação — época {season}**"},
+    "check_players_team": {"en": "Check players for team", "pt_mz": "Ver jogadores da equipa"},
+    "bb_subheader": {"en": "🎫 Bet Builder — Tickets", "pt_mz": "🎫 Construtor de Apostas — Bilhetes"},
+    "bb_caption": {
+        "en": "Select leagues + date range → fetch upcoming games → configure markets per match → generate Conservative / Moderate / High-Risk **tickets**. Each ticket contains one pick per match (one pick from each of up to 8 matches).",
+        "pt_mz": "Selecione ligas + intervalo de datas → busque jogos futuros → configure mercados por jogo → gere **bilhetes** Conservador / Moderado / Risco Alto. Cada bilhete contém uma escolha por jogo (até 8 jogos).",
+    },
+    "bb_from": {"en": "From", "pt_mz": "De"},
+    "bb_to": {"en": "To", "pt_mz": "Até"},
+    "bb_leagues": {"en": "Leagues", "pt_mz": "Ligas"},
+    "bb_leagues_help": {
+        "en": "Select any number of leagues. All 6 are selected by default.",
+        "pt_mz": "Selecione qualquer número de ligas. As 6 ligas estão selecionadas por defeito.",
+    },
+    "bb_legs": {"en": "Legs per ticket", "pt_mz": "Pernas por bilhete"},
+    "bb_legs_help": {
+        "en": "How many picks form one ticket (one pick per match).\n\n• 8 legs (default) → one pick from each of 8 different matches\n• More legs = higher combined payout but harder to win.\n• Each leg must come from a different match.",
+        "pt_mz": "Quantas escolhas formam um bilhete (uma escolha por jogo).\n\n• 8 pernas (padrão) → uma escolha em 8 jogos diferentes\n• Mais pernas = retorno combinado maior, mas mais difícil ganhar.\n• Cada perna deve vir de um jogo diferente.",
+    },
+    "bb_tickets_per_tier": {"en": "Tickets per tier", "pt_mz": "Bilhetes por nível"},
+    "bb_tickets_help": {
+        "en": "Number of tickets shown per tier (Conservative / Moderate / High Risk).\n\nEach ticket rotates picks for variety across the same matches.",
+        "pt_mz": "Número de bilhetes mostrados por nível (Conservador / Moderado / Risco Alto).\n\nCada bilhete roda escolhas para dar variedade nos mesmos jogos.",
+    },
+    "bb_min_prob": {"en": "Min single-pick probability", "pt_mz": "Probabilidade mínima por escolha"},
+    "bb_min_prob_help": {
+        "en": "Minimum model confidence required for a pick to qualify.\n\n• 0.35 → picks the model rates ≥ 35% likely\n• Higher = fewer but more reliable picks\n• Lower = more picks and market variety\n\nFor new markets (Score First, Player to Score) try 0.20–0.35.",
+        "pt_mz": "Confiança mínima do modelo para uma escolha qualificar.\n\n• 0.35 → escolhas com probabilidade ≥ 35%\n• Mais alto = menos escolhas, mais fiáveis\n• Mais baixo = mais escolhas e mais variedade\n\nPara mercados novos (Score First, Player to Score), experimente 0.20–0.35.",
+    },
+    "bb_markets": {"en": "Markets to consider", "pt_mz": "Mercados a considerar"},
+    "bb_markets_help": {
+        "en": "The app generates picks for **every selected market** across **all matches**.\n\nEach ticket leg can freely mix markets — e.g. Ticket 1 might have:\n• Match A → Corners O/U 9.5 Over\n• Match B → Score: Harry Kane\n• Match C → Home (1X2)\n\nMore markets = more rotation variety across tickets.",
+        "pt_mz": "A app gera escolhas para **cada mercado selecionado** em **todos os jogos**.\n\nCada perna do bilhete pode misturar mercados — ex.: o Bilhete 1 pode ter:\n• Jogo A → Corners O/U 9.5 Over\n• Jogo B → Score: Harry Kane\n• Jogo C → Casa (1X2)\n\nMais mercados = mais variedade de rotação entre bilhetes.",
+    },
+    "bb_select_league_info": {"en": "👆 Select at least one league above to continue.", "pt_mz": "👆 Selecione pelo menos uma liga acima para continuar."},
+    "bb_select_market_info": {"en": "👆 Select at least one market above to continue.", "pt_mz": "👆 Selecione pelo menos um mercado acima para continuar."},
+    "bb_fetch_btn": {"en": "🔍 Fetch Upcoming Games", "pt_mz": "🔍 Buscar Jogos Futuros"},
+    "bb_fetch_btn_help": {
+        "en": "With API key: fetches real upcoming fixtures from API-Football.\nWithout API key: loads matches from the local dataset.",
+        "pt_mz": "Com chave API: busca jogos futuros reais da API-Football.\nSem chave API: carrega jogos do dataset local.",
+    },
+    "bb_sidebar_key_hint": {
+        "en": "Add an **API-Football key** in the sidebar for live upcoming fixtures. Without it, the local dataset is used as fallback.",
+        "pt_mz": "Adicione uma **chave API-Football** na barra lateral para jogos futuros em tempo real. Sem chave, usa o dataset local como fallback.",
+    },
+    "bb_fetching": {"en": "Fetching fixtures…", "pt_mz": "A buscar jogos…"},
+    "bb_local_loaded": {
+        "en": "📂 Loaded {n} match(es) from local dataset (ESPN returned nothing for this date range — try dates within the next 2 weeks for live fixtures).",
+        "pt_mz": "📂 Carregados {n} jogo(s) do dataset local (a ESPN não devolveu jogos neste intervalo — tente datas dentro das próximas 2 semanas para jogos em tempo real).",
+    },
+    "bb_no_matches_range": {
+        "en": "No matches found for the selected leagues / date range. Try different dates or refresh data from the sidebar.",
+        "pt_mz": "Não foram encontrados jogos para as ligas / datas selecionadas. Tente outras datas ou atualize os dados na barra lateral.",
+    },
+    "bb_status_upcoming": {"en": "Upcoming", "pt_mz": "Futuro"},
+    "bb_status_played": {"en": "Played ({rf})", "pt_mz": "Jogado ({rf})"},
+    "bb_stat_upcoming": {"en": "✅ **{n}** upcoming", "pt_mz": "✅ **{n}** futuros"},
+    "bb_stat_completed": {"en": "📋 **{n}** completed (historical)", "pt_mz": "📋 **{n}** concluídos (histórico)"},
+    "bb_loaded_caption": {
+        "en": "**{n} match(es) loaded** — tick the matches to include, then click **🎫 Generate Tickets**. Picks will be generated for all **{m} selected market(s)**.",
+        "pt_mz": "**{n} jogo(s) carregado(s)** — marque os jogos para incluir e clique em **🎫 Gerar Bilhetes**. Serão geradas escolhas para os **{m} mercado(s) selecionado(s)**.",
+    },
+    "bb_col_date": {"en": "Date", "pt_mz": "Data"},
+    "bb_col_league": {"en": "League", "pt_mz": "Liga"},
+    "bb_col_home": {"en": "Home", "pt_mz": "Casa"},
+    "bb_col_away": {"en": "Away", "pt_mz": "Fora"},
+    "bb_col_status": {"en": "Status", "pt_mz": "Estado"},
+    "bb_gen_btn": {"en": "🎫 Generate Tickets", "pt_mz": "🎫 Gerar Bilhetes"},
+    "bb_include_warning": {"en": "Please include at least **1** match to generate tickets.", "pt_mz": "Inclua pelo menos **1** jogo para gerar bilhetes."},
+    "bb_compute_probs": {"en": "Computing model probabilities…", "pt_mz": "A calcular probabilidades do modelo…"},
+    "bb_no_picks_generated": {"en": "No picks could be generated. Check that the team names exist in the dataset.", "pt_mz": "Não foi possível gerar escolhas. Verifique se os nomes das equipas existem no dataset."},
+    "bb_no_threshold": {
+        "en": "No picks pass the {p:.0%} probability threshold. Lower the 'Min single-pick probability' slider.",
+        "pt_mz": "Nenhuma escolha passou o limiar de probabilidade de {p:.0%}. Reduza o slider 'Probabilidade mínima por escolha'.",
+    },
+    "bb_success": {
+        "en": "**{picks} pick(s)** across **{matches} match(es)** qualify (prob ≥ {prob:.0%}) — building **{n}** ticket(s) per tier with up to **{legs}** legs each.",
+        "pt_mz": "**{picks} escolha(s)** em **{matches} jogo(s)** qualificam (prob ≥ {prob:.0%}) — a construir **{n}** bilhete(s) por nível, com até **{legs}** pernas cada.",
+    },
+    "bb_qualifying_picks": {"en": "Qualifying picks", "pt_mz": "Escolhas qualificadas"},
+    "bb_no_valid_tickets": {"en": "No valid tickets could be built — all picks may be from the same match.", "pt_mz": "Não foi possível construir bilhetes válidos — todas as escolhas podem ser do mesmo jogo."},
+    "bb_tab_conservative": {"en": "🟢 Conservative", "pt_mz": "🟢 Conservador"},
+    "bb_tab_moderate": {"en": "🟡 Moderate", "pt_mz": "🟡 Moderado"},
+    "bb_tab_high_risk": {"en": "🔴 High Risk", "pt_mz": "🔴 Risco Alto"},
+    "bb_cap_conservative": {"en": "Matches sorted by highest hit-probability (safest legs first)", "pt_mz": "Jogos ordenados por maior probabilidade de acerto (pernas mais seguras primeiro)"},
+    "bb_cap_moderate": {"en": "Matches sorted by best expected ROI (balanced value + probability)", "pt_mz": "Jogos ordenados pelo melhor ROI esperado (equilíbrio entre valor + probabilidade)"},
+    "bb_cap_high_risk": {"en": "Matches sorted by highest individual odds (maximum payout, higher variance)", "pt_mz": "Jogos ordenados pelas maiores odds individuais (retorno máximo, maior variância)"},
+    "bb_download_pdf": {"en": "Download PDF ({tier})", "pt_mz": "Descarregar PDF ({tier})"},
+    "bb_pdf_no_tickets": {"en": "No tickets available for this tier.", "pt_mz": "Não há bilhetes disponíveis para este nível."},
+    "decision_support": {"en": "Decision support only. Betting carries financial risk.", "pt_mz": "Apenas suporte à decisão. Apostar envolve risco financeiro."},
+    "page2_no_player_train": {"en": "Not enough player contribution data to train player XGBoost models.", "pt_mz": "Dados insuficientes de contribuição para treinar modelos XGBoost de jogadores."},
+    "page2_no_team_records": {"en": "No player contribution records available for selected team.", "pt_mz": "Não há registos de contribuição para a equipa selecionada."},
+    "page2_season_stats": {"en": "#### Season Stats — Corners · Fouls · Cards", "pt_mz": "#### Estatísticas da época — Cantos · Faltas · Cartões"},
+    "page2_rank_cutoff": {"en": "Rank cutoff (top N vs the rest)", "pt_mz": "Corte de ranking (top N vs restantes)"},
+    "page2_no_team_season_matches": {"en": "No current-season match data found for this team.", "pt_mz": "Não foram encontrados jogos desta época para esta equipa."},
+    "page2_full_log": {"en": "Full match log — corners, fouls, cards", "pt_mz": "Log completo de jogos — cantos, faltas, cartões"},
+}
+
+
+def ui_t(lang: str, key: str, **kwargs: object) -> str:
+    items = UI_I18N.get(key, {})
+    text = items.get(lang) or items.get("en") or key
+    return text.format(**kwargs)
 
 
 def apply_style() -> None:
@@ -263,10 +499,13 @@ def apply_style() -> None:
           border-radius: 9px !important;
           font-weight: 600 !important;
           font-size: 0.9rem !important;
-          padding: 0 1.25rem !important;
-          height: 2.4rem !important;
+          padding: 0.35rem 1rem !important;
+          min-height: 2.4rem !important;
           border: none !important;
           transition: all 0.2s ease;
+          white-space: normal !important;
+          line-height: 1.2 !important;
+          text-align: center !important;
         }
         [data-testid="stTabs"] [aria-selected="true"] {
           background: var(--card-2) !important;
@@ -364,6 +603,12 @@ def apply_style() -> None:
           overflow: visible !important;
           line-height: 1.4 !important;
         }
+        [data-testid="stWidgetLabel"] {
+          margin-bottom: 0.25rem !important;
+        }
+        [data-testid="stWidgetLabel"] p {
+          margin: 0 !important;
+        }
 
         /* ── Sliders: separate label from thumb-value tooltip ── */
         /* The thumb tooltip is positioned absolute ~20 px above the track,
@@ -375,7 +620,7 @@ def apply_style() -> None:
         }
         [data-testid="stSlider"] [data-testid="stWidgetLabel"],
         .stSlider [data-testid="stWidgetLabel"] {
-          padding-bottom: 1.6rem !important; /* room for floating tooltip */
+          padding-bottom: 0.55rem !important;
         }
         /* Streamlit 1.45 renders the track wrapper directly under stSlider;
            push it down so the tooltip clears the label on any viewport */
@@ -403,7 +648,7 @@ def apply_style() -> None:
           height: auto !important;
           min-height: 2.4rem !important;
           padding: 0.35rem 1rem !important;
-          white-space: nowrap !important;
+          white-space: normal !important;
         }
 
         /* ── Multiselect: clip tags cleanly inside narrow columns ── */
@@ -664,6 +909,76 @@ def _team_row(snapshot: pd.DataFrame, league_name: str, team: str) -> pd.Series:
     return row.iloc[0] if not row.empty else pd.Series(dtype=float)
 
 
+def _h2h_features_for_scope(
+    historical: pd.DataFrame,
+    home_team: str,
+    away_team: str,
+    as_of_date: pd.Timestamp,
+    years: int,
+    league_codes: set[str] | None = None,
+    half_life_days: float = 900.0,
+) -> dict[str, float]:
+    min_date = as_of_date - pd.Timedelta(days=max(years, 1) * 365)
+    h2h = historical.loc[
+        (historical["match_date"] >= min_date)
+        & (historical["result_ft"].isin(RESULT_VALUES))
+        & (
+            ((historical["home_team"] == home_team) & (historical["away_team"] == away_team))
+            | ((historical["home_team"] == away_team) & (historical["away_team"] == home_team))
+        )
+    ].copy()
+    if league_codes:
+        clean_codes = {str(code) for code in league_codes if str(code).strip()}
+        if clean_codes:
+            h2h = h2h.loc[h2h["league_code"].astype(str).isin(clean_codes)].copy()
+    if h2h.empty:
+        return {
+            "h2h_matches": 0.0,
+            "h2h_home_win_rate": 0.0,
+            "h2h_draw_rate": 0.0,
+            "h2h_away_win_rate": 0.0,
+            "h2h_goal_diff_pg": 0.0,
+            "h2h_gap": 0.0,
+        }
+
+    h2h["match_date"] = pd.to_datetime(h2h["match_date"], errors="coerce")
+    ages = (as_of_date - h2h["match_date"]).dt.days.clip(lower=0)
+    weights = np.exp(-ages / max(half_life_days, 1.0))
+
+    same_orientation = (h2h["home_team"] == home_team) & (h2h["away_team"] == away_team)
+    home_goals = pd.to_numeric(h2h["home_goals_ft"], errors="coerce").fillna(0.0)
+    away_goals = pd.to_numeric(h2h["away_goals_ft"], errors="coerce").fillna(0.0)
+    perspective_goal_diff = np.where(
+        same_orientation,
+        home_goals - away_goals,
+        away_goals - home_goals,
+    )
+
+    result = h2h["result_ft"].astype(str)
+    perspective_result = np.where(
+        same_orientation,
+        result,
+        np.where(result == "H", "A", np.where(result == "A", "H", "D")),
+    )
+
+    total_w = float(weights.sum())
+    if total_w <= 0:
+        total_w = 1.0
+    home_w = float(weights[perspective_result == "H"].sum()) / total_w
+    draw_w = float(weights[perspective_result == "D"].sum()) / total_w
+    away_w = float(weights[perspective_result == "A"].sum()) / total_w
+    goal_diff_w = float(np.sum(perspective_goal_diff * weights) / total_w)
+
+    return {
+        "h2h_matches": float(len(h2h)),
+        "h2h_home_win_rate": float(home_w),
+        "h2h_draw_rate": float(draw_w),
+        "h2h_away_win_rate": float(away_w),
+        "h2h_goal_diff_pg": float(goal_diff_w),
+        "h2h_gap": float(home_w - away_w),
+    }
+
+
 def build_feature_vector(
     context: dict[str, object],
     league_name: str,
@@ -674,27 +989,55 @@ def build_feature_vector(
     away_lineup_strength: float,
     home_big_games_8d: float,
     away_big_games_8d: float,
+    home_league_name: str | None = None,
+    away_league_name: str | None = None,
+    h2h_scope: str = "domestic",
 ) -> tuple[dict[str, float], dict[str, float]]:
     snapshot = context["snapshot"]
     historical = context["historical"]
     as_of_ts = context["as_of_ts"]
 
-    home = _team_row(snapshot, league_name, home_team)
-    away = _team_row(snapshot, league_name, away_team)
+    home_league = home_league_name or league_name
+    away_league = away_league_name or home_league
+    home = _team_row(snapshot, home_league, home_team)
+    away = _team_row(snapshot, away_league, away_team)
     if home.empty or away.empty:
         raise ValueError("Could not build team snapshot for selected teams.")
 
-    h2h = h2h_features_for_match(
-        historical=historical,
-        league_code=str(home["league_code"]),
-        home_team=home_team,
-        away_team=away_team,
-        as_of_date=as_of_ts,
-        years=max(h2h_years, 1),
-    )
+    home_league_code = str(home.get("league_code", ""))
+    away_league_code = str(away.get("league_code", ""))
+    scope = h2h_scope.strip().lower()
+    if scope not in {"all", "domestic"}:
+        scope = "all"
+    if scope == "domestic" and home_league_code == away_league_code:
+        h2h = h2h_features_for_match(
+            historical=historical,
+            league_code=home_league_code,
+            home_team=home_team,
+            away_team=away_team,
+            as_of_date=as_of_ts,
+            years=max(h2h_years, 1),
+        )
+    elif scope == "domestic":
+        h2h = _h2h_features_for_scope(
+            historical=historical,
+            home_team=home_team,
+            away_team=away_team,
+            as_of_date=as_of_ts,
+            years=max(h2h_years, 1),
+            league_codes={home_league_code, away_league_code},
+        )
+    else:
+        h2h = _h2h_features_for_scope(
+            historical=historical,
+            home_team=home_team,
+            away_team=away_team,
+            as_of_date=as_of_ts,
+            years=max(h2h_years, 1),
+        )
 
     league_codes = sorted(snapshot["league_code"].astype(str).dropna().unique())
-    league_idx = float({c: i for i, c in enumerate(league_codes)}.get(str(home["league_code"]), 0))
+    league_idx = float({c: i for i, c in enumerate(league_codes)}.get(home_league_code, 0))
 
     features = {
         "form_points_gap": float(home.get("last_points_pg", 0.0) - away.get("last_points_pg", 0.0)),
@@ -714,11 +1057,17 @@ def build_feature_vector(
     return features, h2h
 
 
-def outcome_name(code: str) -> str:
-    return {"H": "Home Win (1)", "D": "Draw (X)", "A": "Away Win (2)"}.get(code, code)
+def outcome_name(code: str, lang: str = "en") -> str:
+    key = {"H": "outcome_h", "D": "outcome_d", "A": "outcome_a"}.get(code, "")
+    return ui_t(lang, key) if key else code
 
 
-def choose_risk_bets(probs: dict[str, float], odds: dict[str, float], reasons: str) -> list[dict[str, str | float]]:
+def choose_risk_bets(
+    probs: dict[str, float],
+    odds: dict[str, float],
+    reasons: str,
+    lang: str = "en",
+) -> list[dict[str, str | float]]:
     ev = {k: probs[k] * odds[k] - 1.0 for k in probs}
     conservative = max(probs.items(), key=lambda x: x[1])[0]
 
@@ -736,48 +1085,48 @@ def choose_risk_bets(probs: dict[str, float], odds: dict[str, float], reasons: s
 
     return [
         {
-            "tier": "Conservative",
+            "tier": ui_t(lang, "tier_conservative"),
             "pick": conservative,
             "prob": probs[conservative],
             "ev": ev[conservative],
-            "tip": f"Highest hit probability. {reasons}",
+            "tip": ui_t(lang, "tip_conservative", reasons=reasons),
         },
         {
-            "tier": "Moderate",
+            "tier": ui_t(lang, "tier_moderate"),
             "pick": moderate,
             "prob": probs[moderate],
             "ev": ev[moderate],
-            "tip": f"Balance between value and probability. {reasons}",
+            "tip": ui_t(lang, "tip_moderate", reasons=reasons),
         },
         {
-            "tier": "High Risk",
+            "tier": ui_t(lang, "tier_high_risk"),
             "pick": high,
             "prob": probs[high],
             "ev": ev[high],
-            "tip": f"Higher variance with stronger payout profile. {reasons}",
+            "tip": ui_t(lang, "tip_high_risk", reasons=reasons),
         },
     ]
 
 
-def explain_factors(features: dict[str, float], home_team: str, away_team: str) -> str:
+def explain_factors(features: dict[str, float], home_team: str, away_team: str, lang: str = "en") -> str:
     msgs: list[str] = []
     if features["fatigue_gap"] > 0.5:
-        msgs.append(f"{away_team} had heavier load recently, increasing fatigue risk")
+        msgs.append(ui_t(lang, "factor_away_fatigue", away=away_team))
     if features["fatigue_gap"] < -0.5:
-        msgs.append(f"{home_team} had heavier recent load")
+        msgs.append(ui_t(lang, "factor_home_fatigue", home=home_team))
     if features["injury_gap"] > 0.4:
-        msgs.append(f"{away_team} has higher key injury impact")
+        msgs.append(ui_t(lang, "factor_away_injury", away=away_team))
     if features["injury_gap"] < -0.4:
-        msgs.append(f"{home_team} has higher key injury impact")
+        msgs.append(ui_t(lang, "factor_home_injury", home=home_team))
     if features["forward_goals_gap"] > 0.2:
-        msgs.append(f"{home_team} has stronger recent attacking output")
+        msgs.append(ui_t(lang, "factor_home_attack", home=home_team))
     if features["forward_goals_gap"] < -0.2:
-        msgs.append(f"{away_team} has stronger recent attacking output")
+        msgs.append(ui_t(lang, "factor_away_attack", away=away_team))
     if features["h2h_gap"] > 0.1:
-        msgs.append(f"Head-to-head trend slightly favors {home_team}")
+        msgs.append(ui_t(lang, "factor_home_h2h", home=home_team))
     if features["h2h_gap"] < -0.1:
-        msgs.append(f"Head-to-head trend slightly favors {away_team}")
-    return "; ".join(msgs) if msgs else "Model sees balanced conditions with no dominant contextual edge"
+        msgs.append(ui_t(lang, "factor_away_h2h", away=away_team))
+    return "; ".join(msgs) if msgs else ui_t(lang, "factor_balanced")
 
 
 def team_last5_form(
@@ -809,14 +1158,15 @@ def team_last5_form(
 def _auto_suggest_odds(
     context: dict,
     match_model: object,
-    league: str,
+    home_league: str,
+    away_league: str,
     home_team: str,
     away_team: str,
 ) -> tuple[float, float, float]:
     """Compute model-implied odds (with 5% bookmaker margin) for current matchup."""
     feats, _ = build_feature_vector(
         context=context,
-        league_name=league,
+        league_name=home_league,
         home_team=home_team,
         away_team=away_team,
         h2h_years=5,
@@ -824,6 +1174,9 @@ def _auto_suggest_odds(
         away_lineup_strength=0.0,
         home_big_games_8d=0.0,
         away_big_games_8d=0.0,
+        home_league_name=home_league,
+        away_league_name=away_league,
+        h2h_scope="all",
     )
     p = predict_match_proba(match_model, feats)
     m = 0.05  # 5% margin
@@ -1010,13 +1363,22 @@ def load_refresh_metadata() -> dict:
     return {}
 
 
-def _is_stale(ts_str: str | None, hours: float = _STALE_HOURS) -> bool:
-    """Return True if ts_str is absent or older than `hours` hours."""
+def _reference_now(hours_back: float = _STALE_HOURS) -> datetime:
+    """Return a 'safe now' timestamp shifted back by `hours_back` hours."""
+    return datetime.now() - timedelta(hours=hours_back)
+
+
+def _is_stale(ts_str: str | None, cutoff_dt: datetime | None = None) -> bool:
+    """Return True if ts_str is absent or older than cutoff (defaults to now-2h)."""
     if not ts_str:
         return True
     try:
-        last = datetime.fromisoformat(ts_str)
-        return (datetime.now() - last).total_seconds() > hours * 3600
+        last = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        if cutoff_dt is None:
+            cutoff_dt = _reference_now()
+        if last.tzinfo is not None and cutoff_dt.tzinfo is None:
+            cutoff_dt = cutoff_dt.replace(tzinfo=last.tzinfo)
+        return last < cutoff_dt
     except Exception:
         return True
 
@@ -1670,6 +2032,278 @@ def _render_ticket_table(tier_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=_DISPLAY_COLS)
 
 
+def _pdf_escape(text: str) -> str:
+    safe = text.encode("latin-1", "replace").decode("latin-1")
+    return safe.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _wrap_cell_text(text: object, cell_width: float, font_size: float = 7.0) -> list[str]:
+    raw = str(text) if text is not None else ""
+    raw = raw.replace("\r\n", "\n").replace("\r", "\n")
+    max_chars = max(1, int((cell_width - 4.0) / max(font_size * 0.52, 1.0)))
+    out: list[str] = []
+
+    def _split_long_token(token: str) -> list[str]:
+        if len(token) <= max_chars:
+            return [token]
+        parts: list[str] = []
+        i = 0
+        while i < len(token):
+            parts.append(token[i:i + max_chars])
+            i += max_chars
+        return parts
+
+    paragraphs = raw.split("\n") if raw else [""]
+    for p in paragraphs:
+        words = p.split(" ") if p else [""]
+        line = ""
+        for word in words:
+            if not word and line:
+                continue
+            if len(word) > max_chars:
+                # Flush current line first
+                if line:
+                    out.append(line)
+                    line = ""
+                for chunk in _split_long_token(word):
+                    out.append(chunk)
+                continue
+            candidate = word if not line else f"{line} {word}"
+            if len(candidate) <= max_chars:
+                line = candidate
+            else:
+                out.append(line)
+                line = word
+        out.append(line if line else "")
+    return out if out else [""]
+
+
+def _build_pdf_from_page_streams(page_streams: list[bytes]) -> bytes:
+    font_obj_num = 3
+    next_obj = 4
+    page_obj_nums: list[int] = []
+    content_obj_nums: list[int] = []
+    content_objects: list[bytes] = []
+
+    for stream in page_streams:
+        page_num = next_obj
+        content_num = next_obj + 1
+        next_obj += 2
+        page_obj_nums.append(page_num)
+        content_obj_nums.append(content_num)
+        content_obj = (
+            f"{content_num} 0 obj\n<< /Length {len(stream)} >>\nstream\n".encode("latin-1")
+            + stream
+            + b"\nendstream\nendobj\n"
+        )
+        content_objects.append(content_obj)
+
+    kids = " ".join(f"{n} 0 R" for n in page_obj_nums)
+    pages_obj = f"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {len(page_obj_nums)} >>\nendobj\n".encode("latin-1")
+    font_obj = b"3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+    catalog_obj = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+
+    page_objs: list[bytes] = []
+    for page_num, content_num in zip(page_obj_nums, content_obj_nums):
+        page_objs.append(
+            (
+                f"{page_num} 0 obj\n"
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                f"/Resources << /Font << /F1 {font_obj_num} 0 R >> >> "
+                f"/Contents {content_num} 0 R >>\n"
+                f"endobj\n"
+            ).encode("latin-1")
+        )
+
+    # Assemble in object-number order.
+    obj_map: dict[int, bytes] = {
+        1: catalog_obj,
+        2: pages_obj,
+        3: font_obj,
+    }
+    for pobj in page_objs:
+        n = int(pobj.split(b" ", 1)[0])
+        obj_map[n] = pobj
+    for cobj in content_objects:
+        n = int(cobj.split(b" ", 1)[0])
+        obj_map[n] = cobj
+
+    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets: list[int] = [0]
+    for obj_num in range(1, next_obj):
+        body = obj_map[obj_num]
+        offsets.append(len(pdf))
+        pdf.extend(body)
+
+    xref_pos = len(pdf)
+    pdf.extend(f"xref\n0 {next_obj}\n".encode("latin-1"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        pdf.extend(f"{off:010d} 00000 n \n".encode("latin-1"))
+    pdf.extend(
+        (
+            f"trailer\n<< /Size {next_obj} /Root 1 0 R >>\n"
+            f"startxref\n{xref_pos}\n%%EOF\n"
+        ).encode("latin-1")
+    )
+    return bytes(pdf)
+
+
+def _ticket_table_page_stream(
+    title: str,
+    subtitle: str,
+    headers: list[str],
+    rows: list[tuple[list[list[str]], float]],
+    page_idx: int,
+    page_count: int,
+    widths: list[float],
+    header_h: float,
+    note: str | None = None,
+) -> bytes:
+    x0 = 40.0
+    y_top = 746.0
+    line_step = 8.5
+    total_w = sum(widths)
+    y_bottom = y_top - header_h - sum(h for _, h in rows)
+    y_title = 806.0
+    y_sub = 790.0
+    y_page = 790.0
+
+    cmds: list[str] = []
+    cmds.extend([
+        "BT",
+        "/F1 12 Tf",
+        f"{x0:.1f} {y_title:.1f} Td",
+        f"({_pdf_escape(title)}) Tj",
+        "ET",
+        "BT",
+        "/F1 9 Tf",
+        f"{x0:.1f} {y_sub:.1f} Td",
+        f"({_pdf_escape(subtitle)}) Tj",
+        "ET",
+        "BT",
+        "/F1 8 Tf",
+        f"{(x0 + total_w - 55):.1f} {y_page:.1f} Td",
+        f"({_pdf_escape(f'Page {page_idx}/{page_count}')}) Tj",
+        "ET",
+    ])
+
+    # Table grid.
+    cmds.append(f"{x0:.1f} {y_top:.1f} m {x0 + total_w:.1f} {y_top:.1f} l S")
+    y_cursor = y_top - header_h
+    cmds.append(f"{x0:.1f} {y_cursor:.1f} m {x0 + total_w:.1f} {y_cursor:.1f} l S")
+    for _, row_h in rows:
+        y_cursor -= row_h
+        cmds.append(f"{x0:.1f} {y_cursor:.1f} m {x0 + total_w:.1f} {y_cursor:.1f} l S")
+    x = x0
+    cmds.append(f"{x:.1f} {y_top:.1f} m {x:.1f} {y_bottom:.1f} l S")
+    for w in widths:
+        x += w
+        cmds.append(f"{x:.1f} {y_top:.1f} m {x:.1f} {y_bottom:.1f} l S")
+
+    # Header row.
+    x = x0
+    y_head_text = y_top - (header_h - 5.0)
+    for i, head in enumerate(headers):
+        cell_txt = _wrap_cell_text(head, widths[i], font_size=7.2)[0]
+        cmds.extend([
+            "BT",
+            "/F1 7.2 Tf",
+            f"{x + 2:.1f} {y_head_text:.1f} Td",
+            f"({_pdf_escape(cell_txt)}) Tj",
+            "ET",
+        ])
+        x += widths[i]
+
+    # Body rows.
+    row_top = y_top - header_h
+    for cells, row_h in rows:
+        x = x0
+        for c_idx, lines in enumerate(cells):
+            line_y = row_top - 9.0
+            for line in lines:
+                cmds.extend([
+                    "BT",
+                    "/F1 7 Tf",
+                    f"{x + 2:.1f} {line_y:.1f} Td",
+                    f"({_pdf_escape(line)}) Tj",
+                    "ET",
+                ])
+                line_y -= line_step
+            x += widths[c_idx]
+        row_top -= row_h
+
+    if note:
+        cmds.extend([
+            "BT",
+            "/F1 9 Tf",
+            f"{x0:.1f} {y_bottom - 18:.1f} Td",
+            f"({_pdf_escape(note)}) Tj",
+            "ET",
+        ])
+
+    return "\n".join(cmds).encode("latin-1", "replace")
+
+
+def ticket_pdf_bytes(tier_name: str, tier_df: pd.DataFrame) -> bytes:
+    display = _render_ticket_table(tier_df).copy()
+    if "📋 Context" in display.columns:
+        display = display.rename(columns={"📋 Context": "Context"})
+
+    headers = [str(c) for c in display.columns.tolist()]
+    rows = display.fillna("").astype(str).values.tolist()
+
+    # Wider Context column + adaptive row heights to preserve full descriptions.
+    widths = [26.0, 66.0, 54.0, 72.0, 28.0, 30.0, 38.0, 30.0, 31.0, 140.0]
+    header_h = 16.0
+    max_body_height = 620.0
+
+    row_layouts: list[tuple[list[list[str]], float]] = []
+    for row in rows:
+        wrapped_cells = [_wrap_cell_text(row[i], widths[i], font_size=7.0) for i in range(len(widths))]
+        max_lines = max((len(lines) for lines in wrapped_cells), default=1)
+        row_h = max(12.0, max_lines * 8.5 + 4.0)
+        row_layouts.append((wrapped_cells, row_h))
+
+    row_pages: list[list[tuple[list[list[str]], float]]] = []
+    if not row_layouts:
+        row_pages = [[]]
+    else:
+        current: list[tuple[list[list[str]], float]] = []
+        used = 0.0
+        for item in row_layouts:
+            h = item[1]
+            if current and (used + h > max_body_height):
+                row_pages.append(current)
+                current = []
+                used = 0.0
+            current.append(item)
+            used += h
+        if current:
+            row_pages.append(current)
+
+    page_count = len(row_pages)
+    subtitle = f"Tier: {tier_name} | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    note = "No tickets available." if not rows else None
+
+    streams: list[bytes] = []
+    for idx, page_rows in enumerate(row_pages, start=1):
+        streams.append(
+            _ticket_table_page_stream(
+                title=f"Football Bets - {tier_name}",
+                subtitle=subtitle,
+                headers=headers,
+                rows=page_rows,
+                page_idx=idx,
+                page_count=page_count,
+                widths=widths,
+                header_h=header_h,
+                note=note if idx == 1 else None,
+            )
+        )
+    return _build_pdf_from_page_streams(streams)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _cached_context(
     data_path_str: str,
@@ -1710,116 +2344,146 @@ def _cached_models(
 def main() -> None:
     st.set_page_config(page_title="Football Bets Tool", page_icon=":soccer:", layout="wide")
     apply_style()
-
-    st.title("Football Bets Tool")
-    st.caption("Match intelligence · League standings · Player probabilities")
-
-    tab_bets, tab_match, tab_league = st.tabs(
-        ["🎯 Bet Builder", "⚽ Match Center", "📊 League & Players"]
-    )
+    ref_now = _reference_now()
+    ref_date = ref_now.date()
 
     with st.sidebar:
-        st.header("Settings")
-        as_of = st.date_input("As-of date", value=date.today())
-        momentum_window = st.slider("Momentum window", 3, 12, 5)
-        with st.expander("External data files"):
-            injuries_file = Path(st.text_input("Injuries CSV", "data/sports/external/injuries.csv"))
-            contrib_file = Path(st.text_input("Player contributions CSV", "data/sports/external/player_contributions.csv"))
-            other_file = Path(st.text_input("Other competitions CSV", "data/sports/external/other_competitions_matches.csv"))
+        if hasattr(st, "segmented_control"):
+            lang = st.segmented_control(
+                "Language / Idioma",
+                options=list(LANGUAGE_OPTIONS.keys()),
+                format_func=lambda k: LANGUAGE_OPTIONS[k],
+                selection_mode="single",
+                default=st.session_state.get("ui_lang", "en"),
+                key="ui_lang",
+            )
+            if not lang:
+                lang = st.session_state.get("ui_lang", "en")
+        else:
+            lang = st.radio(
+                "Language / Idioma",
+                options=list(LANGUAGE_OPTIONS.keys()),
+                format_func=lambda k: LANGUAGE_OPTIONS[k],
+                key="ui_lang",
+                horizontal=True,
+            )
+
+        st.header(ui_t(lang, "settings_header"))
+        as_of = st.date_input(ui_t(lang, "as_of_date"), value=ref_date)
+        momentum_window = st.slider(
+            ui_t(lang, "momentum_window"),
+            3,
+            12,
+            5,
+            help=ui_t(lang, "momentum_help"),
+        )
+        with st.expander(ui_t(lang, "external_files")):
+            injuries_file = Path(st.text_input(ui_t(lang, "injuries_csv"), "data/sports/external/injuries.csv"))
+            contrib_file = Path(st.text_input(ui_t(lang, "contrib_csv"), "data/sports/external/player_contributions.csv"))
+            other_file = Path(st.text_input(ui_t(lang, "other_comp_csv"), "data/sports/external/other_competitions_matches.csv"))
 
         st.divider()
-        st.subheader("API-Football")
+        st.subheader(ui_t(lang, "api_football"))
         api_key = st.text_input(
-            "API key",
+            ui_t(lang, "api_key"),
             type="password",
-            help=(
-                "Optional — used to auto-fetch Starting XI from API-Football.\n\n"
-                "How to get your free key:\n"
-                "1. Go to api-sports.io\n"
-                "2. Click Sign Up → create a free account\n"
-                "3. Open Dashboard → copy your API Key\n"
-                "Free plan: 100 requests/day (no credit card needed)"
-            ),
+            help=ui_t(lang, "api_key_help"),
         )
 
         st.divider()
-        st.subheader("Refresh Data")
-        st.caption(
-            "Runs in the background — you can keep using the app. "
-            "Reload the page once the jobs finish to see updated data."
-        )
+        st.subheader(ui_t(lang, "refresh_data"))
+        st.caption(ui_t(lang, "refresh_caption"))
         refresh_start = st.number_input(
-            "Start season", min_value=1995, max_value=2100, value=date.today().year - 20
+            ui_t(lang, "start_season"), min_value=1995, max_value=2100, value=ref_date.year - 20
         )
         refresh_end = st.number_input(
-            "End season", min_value=1995, max_value=2100, value=date.today().year
+            ui_t(lang, "end_season"), min_value=1995, max_value=2100, value=ref_date.year
         )
         refresh_min_date = st.date_input(
-            "Min match date", value=date(date.today().year - 20, 1, 1)
+            ui_t(lang, "min_match_date"), value=date(ref_date.year - 20, 1, 1)
         )
 
-        if st.button("🔄 Refresh All Data", use_container_width=True):
+        if st.button(ui_t(lang, "refresh_all"), use_container_width=True):
             pid_m = run_refresh(int(refresh_start), int(refresh_end), refresh_min_date)
             pid_p = run_player_stats_refresh(api_key=api_key, season="2526")
             ts = datetime.now().strftime("%H:%M:%S")
             st.session_state["_refresh_ts"] = ts
             st.session_state["_refresh_pids"] = (pid_m, pid_p)
-            st.toast(f"Refresh started at {ts} (match PID {pid_m} · player PID {pid_p})", icon="🚀")
+            st.toast(ui_t(lang, "refresh_started", ts=ts, pid_m=pid_m, pid_p=pid_p), icon="🚀")
 
         if "_refresh_ts" in st.session_state:
             st.info(
-                f"Last refresh started at **{st.session_state['_refresh_ts']}**. "
-                "Reload the page when jobs complete to see new data.",
+                ui_t(lang, "last_refresh_started", ts=st.session_state["_refresh_ts"]),
                 icon="ℹ️",
             )
-
-        with st.expander("📋 View Refresh Logs"):
-            log_tab_m, log_tab_p = st.tabs(["Match Data", "Player Stats"])
-            with log_tab_m:
-                if MATCHES_LOG_FILE.exists():
-                    st.code(MATCHES_LOG_FILE.read_text()[-3000:] or "Empty log.")
-                else:
-                    st.caption("No match-data log yet.")
-            with log_tab_p:
-                if PLAYERS_LOG_FILE.exists():
-                    st.code(PLAYERS_LOG_FILE.read_text()[-3000:] or "Empty log.")
-                else:
-                    st.caption("No player-stats log yet.")
 
         # ── Last-updated metadata display ─────────────────────────────────────
         _meta = load_refresh_metadata()
         if _meta:
             st.divider()
-            st.caption("**Last successful refresh**")
+            st.caption(ui_t(lang, "last_successful_refresh"))
             _m_ts = _meta.get("matches_last_fetch", "–")
             _p_ts = _meta.get("players_last_fetch", "–")
             _p_src = _meta.get("players_source", "")
             st.caption(
-                f"📊 Matches: `{_m_ts[:16]}`  \n"
-                f"👤 Players: `{_p_ts[:16]}` ({_p_src})"
+                ui_t(
+                    lang,
+                    "meta_matches",
+                    matches=_m_ts[:16],
+                    players=_p_ts[:16],
+                    src=_p_src,
+                )
             )
 
-    # ── Auto-refresh if data is stale (once per browser session) ─────────────
-    if not st.session_state.get("_auto_refresh_done"):
-        st.session_state["_auto_refresh_done"] = True
+    st.title(ui_t(lang, "app_title"))
+    st.caption(ui_t(lang, "app_caption"))
+    st.warning(ui_t(lang, "responsible_use_notice"), icon="⚠️")
+
+    tab_bets, tab_match, tab_league = st.tabs(
+        [ui_t(lang, "tab_bets"), ui_t(lang, "tab_match"), ui_t(lang, "tab_league")]
+    )
+
+    # ── Auto-refresh if data is stale (checks periodically; stale cutoff = now-2h) ─
+    _last_check_str = st.session_state.get("_auto_refresh_last_check")
+    _should_check = True
+    if _last_check_str:
+        try:
+            _last_check = datetime.fromisoformat(str(_last_check_str))
+            _should_check = (datetime.now() - _last_check) >= timedelta(minutes=_AUTO_REFRESH_CHECK_EVERY_MINUTES)
+        except Exception:
+            _should_check = True
+    if _should_check:
+        st.session_state["_auto_refresh_last_check"] = datetime.now().isoformat(timespec="seconds")
         _meta = load_refresh_metadata()
-        _m_stale = _is_stale(_meta.get("matches_last_fetch"))
-        _p_stale = _is_stale(_meta.get("players_last_fetch"))
-        if _m_stale or _p_stale:
-            _ar_start = date.today().year - 5   # quick 5-year window for auto-refresh
-            _ar_end   = date.today().year
+        _cutoff = _reference_now()  # now - 2h
+        _m_stale = _is_stale(_meta.get("matches_last_fetch"), cutoff_dt=_cutoff)
+        _p_stale = _is_stale(_meta.get("players_last_fetch"), cutoff_dt=_cutoff)
+
+        _last_trigger_str = st.session_state.get("_auto_refresh_last_trigger")
+        _cooldown_ok = True
+        if _last_trigger_str:
+            try:
+                _last_trigger = datetime.fromisoformat(str(_last_trigger_str))
+                _cooldown_ok = (datetime.now() - _last_trigger) >= timedelta(minutes=_AUTO_REFRESH_TRIGGER_COOLDOWN_MINUTES)
+            except Exception:
+                _cooldown_ok = True
+
+        if (_m_stale or _p_stale) and _cooldown_ok:
+            _ar_start = ref_date.year - 5   # quick 5-year window for auto-refresh
+            _ar_end   = ref_date.year
             _ar_min   = date(_ar_start, 1, 1)
             if _m_stale:
                 run_refresh(_ar_start, _ar_end, _ar_min)
             if _p_stale:
                 run_player_stats_refresh(api_key=api_key, season="2526")
+            st.session_state["_auto_refresh_last_trigger"] = datetime.now().isoformat(timespec="seconds")
             st.toast(
-                "Data was stale (>2 h) — background refresh started automatically.",
+                ui_t(lang, "auto_refresh_started"),
                 icon="🔄",
             )
 
     data_path = DEFAULT_DATA_FILE
-    with st.spinner("Loading data…"):
+    with st.spinner(ui_t(lang, "loading_data")):
         context, err = _cached_context(
             str(data_path), as_of, momentum_window,
             str(injuries_file), str(contrib_file), str(other_file),
@@ -1828,27 +2492,27 @@ def main() -> None:
         is_missing = "not found" in err.lower() or "no such file" in err.lower()
         if is_missing:
             # Auto-fetch transparently — user only sees a loading spinner
-            with st.spinner("Loading match data…"):
+            with st.spinner(ui_t(lang, "loading_match_data")):
                 fetch_err = _fetch_data_sync(DEFAULT_DATA_FILE.parent.parent)
             if fetch_err:
-                st.error(f"Could not load match data: {fetch_err}")
+                st.error(ui_t(lang, "load_match_error", err=fetch_err))
                 st.stop()
             st.rerun()
         else:
-            st.error(f"Could not load data: {err}")
+            st.error(ui_t(lang, "load_data_error", err=err))
             st.stop()
 
     try:
-        with st.spinner("Training models…"):
+        with st.spinner(ui_t(lang, "training_models")):
             match_model, player_models = _cached_models(
                 context["historical"], context["injuries_df"], context["contrib_df"]
             )
     except Exception as exc:  # noqa: BLE001
-        st.error(f"XGBoost training failed. Install xgboost and retry. Details: {exc}")
+        st.error(ui_t(lang, "xgb_fail", exc=exc))
         st.stop()
 
     with tab_match:
-        st.subheader("Match Center")
+        st.subheader(ui_t(lang, "match_center"))
 
         # ── 1. League + team selection ───────────────────────────────────────
         snapshot = context["snapshot"]
@@ -1856,27 +2520,48 @@ def main() -> None:
             l for l in snapshot["league_name"].dropna().unique()
             if l in SUPPORTED_LEAGUES
         )
-        league = st.selectbox("Select League", league_names)
-        teams = sorted(snapshot.loc[snapshot["league_name"] == league, "team"].dropna().unique())
+        matchup_mode = st.radio(
+            ui_t(lang, "matchup_mode"),
+            [ui_t(lang, "same_league"), ui_t(lang, "cross_league")],
+            horizontal=True,
+        )
+        if matchup_mode == ui_t(lang, "same_league"):
+            home_league = st.selectbox(ui_t(lang, "league"), league_names, key="mc_same_league")
+            away_league = home_league
+        else:
+            l1, l2 = st.columns(2)
+            with l1:
+                home_league = st.selectbox(ui_t(lang, "home_league"), league_names, key="mc_home_league")
+            with l2:
+                home_idx = league_names.index(home_league) if home_league in league_names else 0
+                away_league = st.selectbox(ui_t(lang, "away_league"), league_names, index=home_idx, key="mc_away_league")
+
+        home_teams = sorted(snapshot.loc[snapshot["league_name"] == home_league, "team"].dropna().unique())
+        away_teams = sorted(snapshot.loc[snapshot["league_name"] == away_league, "team"].dropna().unique())
+        if not home_teams or not away_teams:
+            st.warning(ui_t(lang, "no_teams_conf"))
+            st.stop()
 
         c1, c2 = st.columns(2)
         with c1:
-            home_team = st.selectbox("Home team", teams)
+            home_team = st.selectbox(ui_t(lang, "home_team"), home_teams)
         with c2:
-            away_candidates = [t for t in teams if t != home_team]
-            away_team = st.selectbox("Away team", away_candidates)
+            away_candidates = away_teams if home_league != away_league else [t for t in away_teams if t != home_team]
+            if not away_candidates:
+                away_candidates = away_teams
+            away_team = st.selectbox(ui_t(lang, "away_team"), away_candidates)
 
         # ── 2. Always-visible match preview ─────────────────────────────────
         current_snap = context["current_snapshot"]
-        h_row = _team_row(current_snap, league, home_team)
-        a_row = _team_row(current_snap, league, away_team)
-        h_form = team_last5_form(context["historical"], home_team, league, context["as_of_ts"])
-        a_form = team_last5_form(context["historical"], away_team, league, context["as_of_ts"])
+        h_row = _team_row(current_snap, home_league, home_team)
+        a_row = _team_row(current_snap, away_league, away_team)
+        h_form = team_last5_form(context["historical"], home_team, home_league, context["as_of_ts"])
+        a_form = team_last5_form(context["historical"], away_team, away_league, context["as_of_ts"])
 
         st.markdown("---")
         mc1, mc2 = st.columns(2)
         with mc1:
-            st.markdown(f"### 🏠 {home_team}")
+            st.markdown(f"### 🏠 {home_team} ({home_league})")
             st.metric("Position", f"#{int(h_row.get('position', '–'))}" if not h_row.empty else "–")
             st.metric("Points (this season)", int(h_row.get("points", 0)) if not h_row.empty else "–")
             st.metric("Goals scored / conceded (season)", f"{int(h_row.get('goals_for',0))} / {int(h_row.get('goals_against',0))}" if not h_row.empty else "–")
@@ -1885,7 +2570,7 @@ def main() -> None:
             st.metric("Goals scored last 5 (pg)", f"{h_row.get('last_goals_for_pg', 0.0):.2f}" if not h_row.empty else "–")
             st.metric("Goals conceded last 5 (pg)", f"{h_row.get('last_goals_against_pg', 0.0):.2f}" if not h_row.empty else "–")
         with mc2:
-            st.markdown(f"### ✈️ {away_team}")
+            st.markdown(f"### ✈️ {away_team} ({away_league})")
             st.metric("Position", f"#{int(a_row.get('position', '–'))}" if not a_row.empty else "–")
             st.metric("Points (this season)", int(a_row.get("points", 0)) if not a_row.empty else "–")
             st.metric("Goals scored / conceded (season)", f"{int(a_row.get('goals_for',0))} / {int(a_row.get('goals_against',0))}" if not a_row.empty else "–")
@@ -1896,7 +2581,7 @@ def main() -> None:
 
         # ── 3. Always-visible player intelligence ────────────────────────────
         st.markdown("---")
-        st.markdown("#### Player Intelligence")
+        st.markdown(ui_t(lang, "player_intel"))
         insights = player_match_insights(
             home_team=home_team,
             away_team=away_team,
@@ -1907,34 +2592,41 @@ def main() -> None:
         )
         pi1, pi2, pi3 = st.columns(3)
         with pi1:
-            st.markdown("🚑 **Important injuries**")
+            st.markdown(ui_t(lang, "important_injuries"))
             if insights["injured_players"].empty:
-                st.caption("No injury data available.")
+                st.caption(ui_t(lang, "no_injury_data"))
             else:
                 st.dataframe(insights["injured_players"], use_container_width=True, hide_index=True)
         with pi2:
-            st.markdown("⚽ **Likely scorers**")
+            st.markdown(ui_t(lang, "likely_scorers"))
             if insights["likely_scorers"].empty:
-                st.caption("No contribution data available.")
+                st.caption(ui_t(lang, "no_contrib_data"))
             else:
                 st.dataframe(insights["likely_scorers"], use_container_width=True, hide_index=True)
         with pi3:
-            st.markdown("🟨 **Likely cards**")
+            st.markdown(ui_t(lang, "likely_cards"))
             if insights["likely_cards"].empty:
-                st.caption("No contribution data available.")
+                st.caption(ui_t(lang, "no_contrib_data"))
             else:
                 st.dataframe(insights["likely_cards"], use_container_width=True, hide_index=True)
 
         # ── 4. Auto-suggested odds ───────────────────────────────────────────
         st.markdown("---")
-        st.markdown("#### Odds")
-        st.caption("Auto-calculated from model (position · form · H2H). Edit freely.")
+        st.markdown(ui_t(lang, "odds_title"))
+        st.caption(ui_t(lang, "odds_caption"))
 
-        combo_key = f"{league}|{home_team}|{away_team}"
+        combo_key = f"{home_league}|{away_league}|{home_team}|{away_team}"
         if st.session_state.get("_odds_combo") != combo_key and match_model is not None:
             st.session_state["_odds_combo"] = combo_key
             try:
-                oh, od, oa = _auto_suggest_odds(context, match_model, league, home_team, away_team)
+                oh, od, oa = _auto_suggest_odds(
+                    context=context,
+                    match_model=match_model,
+                    home_league=home_league,
+                    away_league=away_league,
+                    home_team=home_team,
+                    away_team=away_team,
+                )
                 st.session_state["_odd_h"] = oh
                 st.session_state["_odd_d"] = od
                 st.session_state["_odd_a"] = oa
@@ -1945,20 +2637,20 @@ def main() -> None:
 
         odds_cols = st.columns(3)
         with odds_cols[0]:
-            odd_h = st.number_input("Home odd (1)", min_value=1.01, step=0.05, key="_odd_h")
+            odd_h = st.number_input(ui_t(lang, "home_odd"), min_value=1.01, step=0.05, key="_odd_h")
         with odds_cols[1]:
-            odd_d = st.number_input("Draw odd (X)", min_value=1.01, step=0.05, key="_odd_d")
+            odd_d = st.number_input(ui_t(lang, "draw_odd"), min_value=1.01, step=0.05, key="_odd_d")
         with odds_cols[2]:
-            odd_a = st.number_input("Away odd (2)", min_value=1.01, step=0.05, key="_odd_a")
+            odd_a = st.number_input(ui_t(lang, "away_odd"), min_value=1.01, step=0.05, key="_odd_a")
 
         # ── 5. Starting XI ───────────────────────────────────────────────────
         st.markdown("---")
-        with st.expander("Starting XI (optional — fetch online or enter manually)", expanded=False):
-            xi_key = f"xi_{league}_{home_team}_{away_team}"
+        with st.expander(ui_t(lang, "starting_xi"), expanded=False):
+            xi_key = f"xi_{home_league}_{away_league}_{home_team}_{away_team}"
             if xi_key not in st.session_state:
                 st.session_state[xi_key] = {"home": [], "away": []}
 
-            if st.button("Fetch probable XI online"):
+            if st.button(ui_t(lang, "fetch_xi"), key=f"xi_fetch_{xi_key}"):
                 home_xi, away_xi, msg = fetch_probable_xi_api_football(api_key, home_team, away_team)
                 if home_xi:
                     st.session_state[xi_key]["home"] = home_xi
@@ -1983,24 +2675,40 @@ def main() -> None:
         away_xi = parse_lineup_text(away_xi_text if "away_xi_text" in dir() else "")
 
         # ── 6. H2H + fatigue controls ────────────────────────────────────────
-        h2h_years = st.slider("H2H years look-back", min_value=1, max_value=20, value=5)
+        h2h_years = st.slider(ui_t(lang, "h2h_lookback"), min_value=1, max_value=20, value=5)
+        h2h_scope_label = st.radio(
+            ui_t(lang, "h2h_scope"),
+            [ui_t(lang, "h2h_all"), ui_t(lang, "h2h_domestic")],
+            horizontal=True,
+        )
+        h2h_scope = "all" if h2h_scope_label == ui_t(lang, "h2h_all") else "domestic"
         fatigue_cols = st.columns(2)
         with fatigue_cols[0]:
-            home_big_games = st.number_input(f"{home_team} big games last 8 days", min_value=0, max_value=6, value=0)
+            home_big_games = st.number_input(
+                ui_t(lang, "home_big_games", team=home_team),
+                min_value=0,
+                max_value=6,
+                value=0,
+            )
         with fatigue_cols[1]:
-            away_big_games = st.number_input(f"{away_team} big games last 8 days", min_value=0, max_value=6, value=0)
+            away_big_games = st.number_input(
+                ui_t(lang, "away_big_games", team=away_team),
+                min_value=0,
+                max_value=6,
+                value=0,
+            )
 
         # ── 7. Run prediction ─────────────────────────────────────────────────
         st.markdown("---")
-        if st.button("▶ Run full prediction", use_container_width=True):
+        if st.button(ui_t(lang, "run_prediction"), use_container_width=True):
             if match_model is None:
-                st.warning("Not enough data to train match XGBoost model.")
+                st.warning(ui_t(lang, "not_enough_train_data"))
             else:
                 home_strength = lineup_strength(home_team, home_xi, context["contrib_df"], context["as_of_ts"])
                 away_strength = lineup_strength(away_team, away_xi, context["contrib_df"], context["as_of_ts"])
                 features, h2h = build_feature_vector(
                     context=context,
-                    league_name=league,
+                    league_name=home_league,
                     home_team=home_team,
                     away_team=away_team,
                     h2h_years=h2h_years,
@@ -2008,53 +2716,68 @@ def main() -> None:
                     away_lineup_strength=away_strength,
                     home_big_games_8d=float(home_big_games),
                     away_big_games_8d=float(away_big_games),
+                    home_league_name=home_league,
+                    away_league_name=away_league,
+                    h2h_scope=h2h_scope,
                 )
 
                 probs = predict_match_proba(match_model, features)
                 pred_label = max(probs, key=probs.get)
-                reasons = explain_factors(features, home_team, away_team)
+                reasons = explain_factors(features, home_team, away_team, lang=lang)
 
                 st.markdown('<div class="metric">', unsafe_allow_html=True)
-                st.write(f"Predicted outcome: **{outcome_name(pred_label)}**")
-                st.write(f"Probabilities → 1: {probs['H']:.2%} | X: {probs['D']:.2%} | 2: {probs['A']:.2%}")
-                st.write(f"Key factors: {reasons}")
+                st.write(ui_t(lang, "predicted_outcome", outcome=outcome_name(pred_label, lang=lang)))
+                st.write(ui_t(lang, "prob_line", h=probs["H"], d=probs["D"], a=probs["A"]))
+                st.write(ui_t(lang, "key_factors", reasons=reasons))
                 st.markdown("</div>", unsafe_allow_html=True)
 
                 risk = choose_risk_bets(
                     probs=probs,
                     odds={"H": float(odd_h), "D": float(odd_d), "A": float(odd_a)},
                     reasons=reasons,
+                    lang=lang,
                 )
                 cols = st.columns(3)
                 for col, item in zip(cols, risk):
                     with col:
                         st.metric(
                             label=item["tier"],
-                            value=outcome_name(str(item["pick"])),
+                            value=outcome_name(str(item["pick"]), lang=lang),
                             delta=f"P={float(item['prob']):.1%} | EV={float(item['ev']):+.2f}",
                             help=str(item["tip"]),
                         )
 
-                st.markdown(f"#### Past H2H — last {h2h_years} years")
+                scope_text = ui_t(lang, "scope_all") if h2h_scope == "all" else ui_t(lang, "scope_domestic")
+                st.markdown(ui_t(lang, "past_h2h", years=h2h_years, scope=scope_text))
                 hist = context["historical"]
                 min_date = context["as_of_ts"] - pd.Timedelta(days=365 * h2h_years)
                 h2h_rows = hist.loc[
-                    (hist["league_name"] == league)
-                    & (hist["match_date"] >= min_date)
+                    (hist["match_date"] >= min_date)
                     & (
                         ((hist["home_team"] == home_team) & (hist["away_team"] == away_team))
                         | ((hist["home_team"] == away_team) & (hist["away_team"] == home_team))
                     )
-                ].sort_values("match_date", ascending=False)
+                ].copy()
+                if h2h_scope == "domestic":
+                    h_codes = {str(h_row.get("league_code", "")), str(a_row.get("league_code", ""))}
+                    h_codes = {c for c in h_codes if c}
+                    if h_codes:
+                        h2h_rows = h2h_rows.loc[h2h_rows["league_code"].astype(str).isin(h_codes)]
+                h2h_rows = h2h_rows.sort_values("match_date", ascending=False)
 
                 st.caption(
-                    f"H2H: {int(h2h['h2h_matches'])} matches · "
-                    f"Home win {h2h['h2h_home_win_rate']:.1%} · "
-                    f"Draw {h2h['h2h_draw_rate']:.1%} · "
-                    f"Away win {h2h['h2h_away_win_rate']:.1%}"
+                    ui_t(
+                        lang,
+                        "h2h_caption",
+                        scope=scope_text,
+                        matches=int(h2h["h2h_matches"]),
+                        home=h2h["h2h_home_win_rate"],
+                        draw=h2h["h2h_draw_rate"],
+                        away=h2h["h2h_away_win_rate"],
+                    )
                 )
                 safe_h2h_cols = [c for c in [
-                    "match_date", "season_label", "home_team", "away_team",
+                    "match_date", "league_name", "season_label", "home_team", "away_team",
                     "home_goals_ft", "away_goals_ft", "result_ft",
                     "home_corners", "away_corners",
                     "home_yellow_cards", "away_yellow_cards",
@@ -2063,18 +2786,18 @@ def main() -> None:
                 st.dataframe(h2h_rows[safe_h2h_cols], use_container_width=True, hide_index=True)
 
     with tab_league:
-        st.subheader("League & Players")
+        st.subheader(ui_t(lang, "league_players"))
         current_snapshot = context["current_snapshot"].copy()
         leagues = sorted(
             l for l in current_snapshot["league_name"].dropna().unique()
             if l in SUPPORTED_LEAGUES
         )
-        league = st.selectbox("Select league", leagues, key="page2_league")
+        league = st.selectbox(ui_t(lang, "select_league"), leagues, key="page2_league")
         league_table = current_snapshot.loc[current_snapshot["league_name"] == league].sort_values(
             ["position", "points", "goal_diff"], ascending=[True, False, False]
         )
 
-        st.markdown(f"**Standings — {context['current_season']} season**")
+        st.markdown(ui_t(lang, "standings_title", season=context["current_season"]))
 
         # Add last-5 form string for each team
         league_table = league_table.copy()
@@ -2102,11 +2825,11 @@ def main() -> None:
         st.dataframe(league_table[standings_cols], use_container_width=True, hide_index=True)
 
         teams = sorted(current_snapshot.loc[current_snapshot["league_name"] == league, "team"].dropna().unique())
-        team = st.selectbox("Check players for team", teams, key="page2_team")
+        team = st.selectbox(ui_t(lang, "check_players_team"), teams, key="page2_team")
 
         st.markdown("**Player info and likelihood (XGBoost)**")
         if player_models is None:
-            st.info("Not enough player contribution data to train player XGBoost models.")
+            st.info(ui_t(lang, "page2_no_player_train"))
         else:
             player_probs = player_probabilities_for_team(
                 team=team,
@@ -2116,7 +2839,7 @@ def main() -> None:
                 top_n=20,
             )
             if player_probs.empty:
-                st.info("No player contribution records available for selected team.")
+                st.info(ui_t(lang, "page2_no_team_records"))
             else:
                 st.dataframe(player_probs, use_container_width=True, hide_index=True)
 
@@ -2223,9 +2946,9 @@ def main() -> None:
 
         # ── Team Season Stats Panel ───────────────────────────────────────────
         st.markdown("---")
-        st.markdown("#### Season Stats — Corners · Fouls · Cards")
+        st.markdown(ui_t(lang, "page2_season_stats"))
         rank_cutoff = st.slider(
-            "Rank cutoff (top N vs the rest)", 4, 12, 8, key="page2_rank_cutoff"
+            ui_t(lang, "page2_rank_cutoff"), 4, 12, 8, key="page2_rank_cutoff"
         )
 
         # Current-season matches for the selected team in the selected league
@@ -2241,7 +2964,7 @@ def main() -> None:
         ].copy()
 
         if team_m.empty:
-            st.info("No current-season match data found for this team.")
+            st.info(ui_t(lang, "page2_no_team_season_matches"))
         else:
             stat_rows: list[dict] = []
             for _, row in team_m.iterrows():
@@ -2341,7 +3064,7 @@ def main() -> None:
             ]
             st.dataframe(pd.DataFrame(segs), use_container_width=True, hide_index=True)
 
-            with st.expander("Full match log — corners, fouls, cards"):
+            with st.expander(ui_t(lang, "page2_full_log")):
                 log = stats_df[
                     [
                         "opponent",
@@ -2373,20 +3096,16 @@ def main() -> None:
         if st.session_state.get("bb_legs", 8) > 12:
             st.session_state["bb_legs"] = 8
 
-        st.subheader("🎫 Bet Builder — Tickets")
-        st.caption(
-            "Select leagues + date range → fetch upcoming games → configure "
-            "markets per match → generate Conservative / Moderate / High-Risk **tickets**. "
-            "Each ticket contains one pick per match (one pick from each of up to 8 matches)."
-        )
+        st.subheader(ui_t(lang, "bb_subheader"))
+        st.caption(ui_t(lang, "bb_caption"))
 
         # ── Row 1: date range + multi-select leagues ──────────────────────────
         bb_c1, bb_c2, bb_c3 = st.columns([1, 1, 2])
         with bb_c1:
-            bb_start = st.date_input("From", value=date.today(), key="bb_start")
+            bb_start = st.date_input(ui_t(lang, "bb_from"), value=ref_date, key="bb_start")
         with bb_c2:
             bb_end = st.date_input(
-                "To", value=date.today() + timedelta(days=7), key="bb_end"
+                ui_t(lang, "bb_to"), value=ref_date + timedelta(days=7), key="bb_end"
             )
         with bb_c3:
             all_league_names = sorted(
@@ -2394,73 +3113,51 @@ def main() -> None:
                 if l in SUPPORTED_LEAGUES
             )
             bb_leagues = st.multiselect(
-                "Leagues",
+                ui_t(lang, "bb_leagues"),
                 options=all_league_names,
                 default=all_league_names,
                 key="bb_leagues",
-                help="Select any number of leagues. All 6 are selected by default.",
+                help=ui_t(lang, "bb_leagues_help"),
             )
 
         # ── Row 2: ticket settings ────────────────────────────────────────────
         sc1, sc2, sc3 = st.columns(3)
         with sc1:
             bb_legs = st.slider(
-                "Legs per ticket", 2, 12, 8, key="bb_legs",
-                help=(
-                    "How many picks form one ticket (one pick per match).\n\n"
-                    "• 8 legs (default) → one pick from each of 8 different matches\n"
-                    "• More legs = higher combined payout but harder to win.\n"
-                    "• Each leg must come from a different match."
-                ),
+                ui_t(lang, "bb_legs"), 2, 12, 8, key="bb_legs",
+                help=ui_t(lang, "bb_legs_help"),
             )
         with sc2:
             bb_n = st.slider(
-                "Tickets per tier", 1, 10, 3, key="bb_n",
-                help=(
-                    "Number of tickets shown per tier "
-                    "(Conservative / Moderate / High Risk).\n\n"
-                    "Each ticket rotates picks for variety across the same matches."
-                ),
+                ui_t(lang, "bb_tickets_per_tier"), 1, 10, 3, key="bb_n",
+                help=ui_t(lang, "bb_tickets_help"),
             )
         with sc3:
             bb_min_prob = st.slider(
-                "Min single-pick probability",
+                ui_t(lang, "bb_min_prob"),
                 0.15,
                 0.75,
                 0.35,
                 step=0.01,
                 key="bb_minp",
-                help=(
-                    "Minimum model confidence required for a pick to qualify.\n\n"
-                    "• 0.35 → picks the model rates ≥ 35% likely\n"
-                    "• Higher = fewer but more reliable picks\n"
-                    "• Lower = more picks and market variety\n\n"
-                    "For new markets (Score First, Player to Score) try 0.20–0.35."
-                ),
+                help=ui_t(lang, "bb_min_prob_help"),
             )
 
         # ── Row 3: markets to consider ────────────────────────────────────────
         bb_markets = st.multiselect(
-            "Markets to consider",
+            ui_t(lang, "bb_markets"),
             options=MARKET_OPTIONS,
             default=["1X2", "Goals O/U 2.5", "Corners O/U 9.5", "Cards O/U 3.5"],
             key="bb_markets",
-            help=(
-                "The app generates picks for **every selected market** across **all matches**.\n\n"
-                "Each ticket leg can freely mix markets — e.g. Ticket 1 might have:\n"
-                "• Match A → Corners O/U 9.5 Over\n"
-                "• Match B → Score: Harry Kane\n"
-                "• Match C → Home (1X2)\n\n"
-                "More markets = more rotation variety across tickets."
-            ),
+            help=ui_t(lang, "bb_markets_help"),
         )
 
         st.markdown("---")
 
         if not bb_leagues:
-            st.info("👆 Select at least one league above to continue.")
+            st.info(ui_t(lang, "bb_select_league_info"))
         elif not bb_markets:
-            st.info("👆 Select at least one market above to continue.")
+            st.info(ui_t(lang, "bb_select_market_info"))
         else:
             # ── Session-state key — resets stored fixtures when config changes ─
             fetch_key = f"{bb_start}|{bb_end}|{'|'.join(sorted(bb_leagues))}"
@@ -2473,27 +3170,21 @@ def main() -> None:
             fc1, fc2 = st.columns([1, 3])
             with fc1:
                 fetch_btn = st.button(
-                    "🔍 Fetch Upcoming Games",
+                    ui_t(lang, "bb_fetch_btn"),
                     key="bb_fetch",
                     use_container_width=True,
-                    help=(
-                        "With API key: fetches real upcoming fixtures from API-Football.\n"
-                        "Without API key: loads matches from the local dataset."
-                    ),
+                    help=ui_t(lang, "bb_fetch_btn_help"),
                 )
             with fc2:
                 stored_msg = st.session_state.get("_bb_fetch_msg")
                 if stored_msg:
                     st.info(stored_msg)
                 elif st.session_state.get("_bb_fixtures") is None:
-                    st.caption(
-                        "Add an **API-Football key** in the sidebar for live upcoming "
-                        "fixtures. Without it, the local dataset is used as fallback."
-                    )
+                    st.caption(ui_t(lang, "bb_sidebar_key_hint"))
 
             # ── Execute fetch ─────────────────────────────────────────────────
             if fetch_btn:
-                with st.spinner("Fetching fixtures…"):
+                with st.spinner(ui_t(lang, "bb_fetching")):
                     fetched_df = pd.DataFrame()
                     fetch_msg = ""
                     source_used = ""
@@ -2523,11 +3214,7 @@ def main() -> None:
                         )
                         fallback = all_m.loc[mask].copy()
                         n_fb = len(fallback)
-                        fetch_msg = (
-                            f"📂 Loaded {n_fb} match(es) from local dataset "
-                            "(ESPN returned nothing for this date range — "
-                            "try dates within the next 2 weeks for live fixtures)."
-                        )
+                        fetch_msg = ui_t(lang, "bb_local_loaded", n=n_fb)
                         fetched_df = fallback
                         source_used = "local dataset"
 
@@ -2543,10 +3230,7 @@ def main() -> None:
 
             if fixtures_df is not None:
                 if fixtures_df.empty:
-                    st.warning(
-                        "No matches found for the selected leagues / date range. "
-                        "Try different dates or refresh data from the sidebar."
-                    )
+                    st.warning(ui_t(lang, "bb_no_matches_range"))
                 else:
                     # Tag upcoming vs completed
                     rf_col = fixtures_df.get("result_ft", pd.Series(dtype=object))
@@ -2555,9 +3239,9 @@ def main() -> None:
                     n_comp = len(fixtures_df) - n_up
                     stat_parts = []
                     if n_up:
-                        stat_parts.append(f"✅ **{n_up}** upcoming")
+                        stat_parts.append(ui_t(lang, "bb_stat_upcoming", n=n_up))
                     if n_comp:
-                        stat_parts.append(f"📋 **{n_comp}** completed (historical)")
+                        stat_parts.append(ui_t(lang, "bb_stat_completed", n=n_comp))
                     st.markdown("  ·  ".join(stat_parts))
 
                     # Build editable match table (market/pick selection is now global)
@@ -2565,7 +3249,11 @@ def main() -> None:
                     for _, row in fixtures_df.iterrows():
                         rf = row.get("result_ft", None)
                         is_upcoming = (rf not in RESULT_VALUES) if pd.notna(rf) else True
-                        status_lbl = "Upcoming" if is_upcoming else f"Played ({rf})"
+                        status_lbl = (
+                            ui_t(lang, "bb_status_upcoming")
+                            if is_upcoming
+                            else ui_t(lang, "bb_status_played", rf=rf)
+                        )
                         pick_rows.append({
                             "include": True,
                             "date":    str(row["match_date"].date()),
@@ -2579,9 +3267,12 @@ def main() -> None:
                     tbl_key = f"bb_tbl_{fetch_key}"
 
                     st.caption(
-                        f"**{len(pick_df)} match(es) loaded** — "
-                        f"tick the matches to include, then click **🎫 Generate Tickets**. "
-                        f"Picks will be generated for all **{len(bb_markets)} selected market(s)**."
+                        ui_t(
+                            lang,
+                            "bb_loaded_caption",
+                            n=len(pick_df),
+                            m=len(bb_markets),
+                        )
                     )
                     edited_picks = st.data_editor(
                         pick_df,
@@ -2589,11 +3280,11 @@ def main() -> None:
                             "include": st.column_config.CheckboxColumn(
                                 "✓", default=True, width="small"
                             ),
-                            "date":   st.column_config.TextColumn("Date",   disabled=True, width="small"),
-                            "league": st.column_config.TextColumn("League", disabled=True),
-                            "home":   st.column_config.TextColumn("Home",   disabled=True),
-                            "away":   st.column_config.TextColumn("Away",   disabled=True),
-                            "status": st.column_config.TextColumn("Status", disabled=True, width="small"),
+                            "date":   st.column_config.TextColumn(ui_t(lang, "bb_col_date"), disabled=True, width="small"),
+                            "league": st.column_config.TextColumn(ui_t(lang, "bb_col_league"), disabled=True),
+                            "home":   st.column_config.TextColumn(ui_t(lang, "bb_col_home"), disabled=True),
+                            "away":   st.column_config.TextColumn(ui_t(lang, "bb_col_away"), disabled=True),
+                            "status": st.column_config.TextColumn(ui_t(lang, "bb_col_status"), disabled=True, width="small"),
                         },
                         hide_index=True,
                         use_container_width=True,
@@ -2603,7 +3294,7 @@ def main() -> None:
 
                     st.markdown("---")
                     if st.button(
-                        "🎫 Generate Tickets",
+                        ui_t(lang, "bb_gen_btn"),
                         use_container_width=True,
                         key="bb_gen",
                     ):
@@ -2612,13 +3303,13 @@ def main() -> None:
                         ].reset_index(drop=True)
 
                         if included.empty:
-                            st.warning("Please include at least **1** match to generate tickets.")
+                            st.warning(ui_t(lang, "bb_include_warning"))
                         else:
                             pick_records: list[dict] = []
                             margin = 0.05
                             _pstats = load_player_stats(str(PLAYER_STATS_FILE))
 
-                            with st.spinner("Computing model probabilities…"):
+                            with st.spinner(ui_t(lang, "bb_compute_probs")):
                                 for _, irow in included.iterrows():
                                     home_t   = str(irow["home"])
                                     away_t   = str(irow["away"])
@@ -2732,10 +3423,7 @@ def main() -> None:
                                             _add_pick(f"{market} — Under", under_p)
 
                             if not pick_records:
-                                st.warning(
-                                    "No picks could be generated. "
-                                    "Check that the team names exist in the dataset."
-                                )
+                                st.warning(ui_t(lang, "bb_no_picks_generated"))
                             else:
                                 all_picks = pd.DataFrame(pick_records)
                                 all_picks = all_picks.loc[
@@ -2743,21 +3431,19 @@ def main() -> None:
                                 ].reset_index(drop=True)
 
                                 if all_picks.empty:
-                                    st.warning(
-                                        f"No picks pass the {bb_min_prob:.0%} probability "
-                                        "threshold. Lower the "
-                                        "'Min single-pick probability' slider."
-                                    )
+                                    st.warning(ui_t(lang, "bb_no_threshold", p=bb_min_prob))
                                 else:
                                     n_matches = all_picks["match_id"].nunique()
-                                    st.success(
-                                        f"**{len(all_picks)} pick(s)** across "
-                                        f"**{n_matches} match(es)** qualify "
-                                        f"(prob ≥ {bb_min_prob:.0%}) — "
-                                        f"building **{bb_n}** ticket(s) per tier "
-                                        f"with up to **{bb_legs}** legs each."
-                                    )
-                                    with st.expander("Qualifying picks"):
+                                    st.success(ui_t(
+                                        lang,
+                                        "bb_success",
+                                        picks=len(all_picks),
+                                        matches=n_matches,
+                                        prob=bb_min_prob,
+                                        n=bb_n,
+                                        legs=bb_legs,
+                                    ))
+                                    with st.expander(ui_t(lang, "bb_qualifying_picks")):
                                         st.dataframe(
                                             all_picks[[
                                                 "match", "market", "pick_label",
@@ -2770,48 +3456,72 @@ def main() -> None:
                                     tickets = _build_tickets(all_picks, bb_legs, bb_n)
 
                                     if all(df.empty for df in tickets.values()):
-                                        st.warning(
-                                            "No valid tickets could be built — "
-                                            "all picks may be from the same match."
-                                        )
+                                        st.warning(ui_t(lang, "bb_no_valid_tickets"))
                                     else:
                                         tier_tabs = st.tabs([
-                                            "🟢 Conservative",
-                                            "🟡 Moderate",
-                                            "🔴 High Risk",
+                                            ui_t(lang, "bb_tab_conservative"),
+                                            ui_t(lang, "bb_tab_moderate"),
+                                            ui_t(lang, "bb_tab_high_risk"),
                                         ])
                                         with tier_tabs[0]:
-                                            st.caption(
-                                                "Matches sorted by highest hit-probability "
-                                                "(safest legs first)"
-                                            )
+                                            st.caption(ui_t(lang, "bb_cap_conservative"))
+                                            cons_table = _render_ticket_table(tickets["conservative"])
                                             st.dataframe(
-                                                _render_ticket_table(tickets["conservative"]),
+                                                cons_table,
                                                 use_container_width=True,
                                                 hide_index=True,
+                                            )
+                                            cons_has_rows = not tickets["conservative"].empty
+                                            st.download_button(
+                                                label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_conservative")),
+                                                data=ticket_pdf_bytes(ui_t(lang, "tier_conservative"), tickets["conservative"]),
+                                                file_name=f"tickets_conservative_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                                mime="application/pdf",
+                                                key=f"bb_pdf_conservative_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                                                disabled=not cons_has_rows,
+                                                help=None if cons_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
+                                                use_container_width=True,
                                             )
                                         with tier_tabs[1]:
-                                            st.caption(
-                                                "Matches sorted by best expected ROI "
-                                                "(balanced value + probability)"
-                                            )
+                                            st.caption(ui_t(lang, "bb_cap_moderate"))
+                                            mod_table = _render_ticket_table(tickets["moderate"])
                                             st.dataframe(
-                                                _render_ticket_table(tickets["moderate"]),
+                                                mod_table,
                                                 use_container_width=True,
                                                 hide_index=True,
+                                            )
+                                            mod_has_rows = not tickets["moderate"].empty
+                                            st.download_button(
+                                                label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_moderate")),
+                                                data=ticket_pdf_bytes(ui_t(lang, "tier_moderate"), tickets["moderate"]),
+                                                file_name=f"tickets_moderate_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                                mime="application/pdf",
+                                                key=f"bb_pdf_moderate_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                                                disabled=not mod_has_rows,
+                                                help=None if mod_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
+                                                use_container_width=True,
                                             )
                                         with tier_tabs[2]:
-                                            st.caption(
-                                                "Matches sorted by highest individual odds "
-                                                "(maximum payout, higher variance)"
-                                            )
+                                            st.caption(ui_t(lang, "bb_cap_high_risk"))
+                                            risk_table = _render_ticket_table(tickets["high_risk"])
                                             st.dataframe(
-                                                _render_ticket_table(tickets["high_risk"]),
+                                                risk_table,
                                                 use_container_width=True,
                                                 hide_index=True,
                                             )
+                                            risk_has_rows = not tickets["high_risk"].empty
+                                            st.download_button(
+                                                label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_high_risk")),
+                                                data=ticket_pdf_bytes(ui_t(lang, "tier_high_risk"), tickets["high_risk"]),
+                                                file_name=f"tickets_high_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                                mime="application/pdf",
+                                                key=f"bb_pdf_high_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                                                disabled=not risk_has_rows,
+                                                help=None if risk_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
+                                                use_container_width=True,
+                                            )
 
-    st.caption("Decision support only. Betting carries financial risk.")
+    st.caption(ui_t(lang, "decision_support"))
 
 
 if __name__ == "__main__":
