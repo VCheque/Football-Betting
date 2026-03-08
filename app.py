@@ -2346,6 +2346,9 @@ def main() -> None:
     apply_style()
     ref_now = _reference_now()
     ref_date = ref_now.date()
+    injuries_file = Path("data/sports/external/injuries.csv")
+    contrib_file = Path("data/sports/external/player_contributions.csv")
+    other_file = Path("data/sports/external/other_competitions_matches.csv")
 
     with st.sidebar:
         if hasattr(st, "segmented_control"):
@@ -2377,10 +2380,6 @@ def main() -> None:
             5,
             help=ui_t(lang, "momentum_help"),
         )
-        with st.expander(ui_t(lang, "external_files")):
-            injuries_file = Path(st.text_input(ui_t(lang, "injuries_csv"), "data/sports/external/injuries.csv"))
-            contrib_file = Path(st.text_input(ui_t(lang, "contrib_csv"), "data/sports/external/player_contributions.csv"))
-            other_file = Path(st.text_input(ui_t(lang, "other_comp_csv"), "data/sports/external/other_competitions_matches.csv"))
 
         st.divider()
         st.subheader(ui_t(lang, "api_football"))
