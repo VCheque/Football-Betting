@@ -229,13 +229,13 @@ UI_I18N: dict[str, dict[str, str]] = {
     "no_teams_conf": {"en": "No teams found for the selected league configuration.", "pt_mz": "Não foram encontradas equipas para esta configuração de ligas."},
     "home_team": {"en": "Home team", "pt_mz": "Equipa da casa"},
     "away_team": {"en": "Away team", "pt_mz": "Equipa visitante"},
-    "player_intel": {"en": "#### Player Intelligence", "pt_mz": "#### Inteligência de jogadores"},
-    "important_injuries": {"en": "🚑 **Important injuries**", "pt_mz": "🚑 **Lesões importantes**"},
-    "likely_scorers": {"en": "⚽ **Likely scorers**", "pt_mz": "⚽ **Prováveis marcadores**"},
-    "likely_cards": {"en": "🟨 **Likely cards**", "pt_mz": "🟨 **Prováveis cartões**"},
+    "player_intel": {"en": "Player Intelligence", "pt_mz": "Inteligência de jogadores"},
+    "important_injuries": {"en": "Important injuries", "pt_mz": "Lesões importantes"},
+    "likely_scorers": {"en": "Likely scorers", "pt_mz": "Prováveis marcadores"},
+    "likely_cards": {"en": "Likely cards", "pt_mz": "Prováveis cartões"},
     "no_injury_data": {"en": "No injury data available.", "pt_mz": "Sem dados de lesões disponíveis."},
     "no_contrib_data": {"en": "No contribution data available.", "pt_mz": "Sem dados de contribuições disponíveis."},
-    "odds_title": {"en": "#### Odds", "pt_mz": "#### Odds"},
+    "odds_title": {"en": "Odds", "pt_mz": "Odds"},
     "odds_caption": {"en": "Auto-calculated from model (position · form · H2H). Edit freely.", "pt_mz": "Calculadas automaticamente pelo modelo (posição · forma · H2H). Pode editar livremente."},
     "home_odd": {"en": "Home odd (1)", "pt_mz": "Odd casa (1)"},
     "draw_odd": {"en": "Draw odd (X)", "pt_mz": "Odd empate (X)"},
@@ -386,7 +386,7 @@ def apply_style() -> None:
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@500&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap');
 
         :root {
           --bg:        #0d1117;
@@ -566,12 +566,45 @@ def apply_style() -> None:
         }
         .metric p, .metric span, .metric div { color: var(--ink) !important; }
 
+        /* ── Material Symbols Outlined icon class ── */
+        .ms {
+          font-family: 'Material Symbols Outlined';
+          font-weight: normal;
+          font-style: normal;
+          font-size: 1.15em;
+          line-height: 1;
+          letter-spacing: normal;
+          text-transform: none;
+          display: inline-block;
+          white-space: nowrap;
+          direction: ltr;
+          -webkit-font-smoothing: antialiased;
+          font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+          color: var(--accent);
+          vertical-align: -0.15em;
+          margin-right: 0.3rem;
+        }
+        .ms-lg { font-size: 1.4em; }
+        .ms-sm { font-size: 0.95em; }
+        .ms-green { color: var(--green) !important; }
+        .ms-red   { color: var(--red) !important; }
+        .ms-muted { color: var(--ink-2) !important; }
+
+        /* Team-league subtitle span */
+        .team-league {
+          color: var(--ink-2);
+          font-size: 0.72em;
+          font-weight: 400;
+        }
+
         /* ── Subheader accent lines — main content only ── */
         /* Streamlit 1.30-1.45: main area is .main > .block-container          or [data-testid="stMain"] > .block-container */
         .main .block-container h2::after,
         .main .block-container h3::after,
+        .main .block-container h4::after,
         [data-testid="stMain"] h2::after,
-        [data-testid="stMain"] h3::after {
+        [data-testid="stMain"] h3::after,
+        [data-testid="stMain"] h4::after {
           content: '';
           display: block;
           margin-top: 6px;
@@ -670,6 +703,22 @@ def apply_style() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def _icon(name: str, extra: str = "") -> str:
+    """Return a Material Symbols Outlined icon span.
+
+    Use inside st.markdown(..., unsafe_allow_html=True) calls only.
+
+    Args:
+        name:  Material Symbols ligature name, e.g. "home", "analytics".
+        extra: Additional CSS class names, e.g. "ms-lg ms-green".
+
+    Returns:
+        HTML <span> string rendered as the icon.
+    """
+    cls = f"ms {extra}".strip() if extra else "ms"
+    return f'<span class="{cls}">{name}</span>'
 
 
 def _start_background(cmd: list[str], log_file: Path) -> int:
@@ -2560,7 +2609,11 @@ def main() -> None:
         st.markdown("---")
         mc1, mc2 = st.columns(2)
         with mc1:
-            st.markdown(f"### 🏠 {home_team} ({home_league})")
+            st.markdown(
+                f'<h3>{_icon("home")}{home_team}'
+                f' <span class="team-league">({home_league})</span></h3>',
+                unsafe_allow_html=True,
+            )
             st.metric("Position", f"#{int(h_row.get('position', '–'))}" if not h_row.empty else "–")
             st.metric("Points (this season)", int(h_row.get("points", 0)) if not h_row.empty else "–")
             st.metric("Goals scored / conceded (season)", f"{int(h_row.get('goals_for',0))} / {int(h_row.get('goals_against',0))}" if not h_row.empty else "–")
@@ -2569,7 +2622,11 @@ def main() -> None:
             st.metric("Goals scored last 5 (pg)", f"{h_row.get('last_goals_for_pg', 0.0):.2f}" if not h_row.empty else "–")
             st.metric("Goals conceded last 5 (pg)", f"{h_row.get('last_goals_against_pg', 0.0):.2f}" if not h_row.empty else "–")
         with mc2:
-            st.markdown(f"### ✈️ {away_team} ({away_league})")
+            st.markdown(
+                f'<h3>{_icon("flight_takeoff")}{away_team}'
+                f' <span class="team-league">({away_league})</span></h3>',
+                unsafe_allow_html=True,
+            )
             st.metric("Position", f"#{int(a_row.get('position', '–'))}" if not a_row.empty else "–")
             st.metric("Points (this season)", int(a_row.get("points", 0)) if not a_row.empty else "–")
             st.metric("Goals scored / conceded (season)", f"{int(a_row.get('goals_for',0))} / {int(a_row.get('goals_against',0))}" if not a_row.empty else "–")
@@ -2580,7 +2637,10 @@ def main() -> None:
 
         # ── 3. Always-visible player intelligence ────────────────────────────
         st.markdown("---")
-        st.markdown(ui_t(lang, "player_intel"))
+        st.markdown(
+            f'<h4>{_icon("analytics")}{ui_t(lang, "player_intel")}</h4>',
+            unsafe_allow_html=True,
+        )
         insights = player_match_insights(
             home_team=home_team,
             away_team=away_team,
@@ -2591,19 +2651,28 @@ def main() -> None:
         )
         pi1, pi2, pi3 = st.columns(3)
         with pi1:
-            st.markdown(ui_t(lang, "important_injuries"))
+            st.markdown(
+                f'{_icon("medical_services", "ms-red")} **{ui_t(lang, "important_injuries")}**',
+                unsafe_allow_html=True,
+            )
             if insights["injured_players"].empty:
                 st.caption(ui_t(lang, "no_injury_data"))
             else:
                 st.dataframe(insights["injured_players"], use_container_width=True, hide_index=True)
         with pi2:
-            st.markdown(ui_t(lang, "likely_scorers"))
+            st.markdown(
+                f'{_icon("sports_soccer", "ms-green")} **{ui_t(lang, "likely_scorers")}**',
+                unsafe_allow_html=True,
+            )
             if insights["likely_scorers"].empty:
                 st.caption(ui_t(lang, "no_contrib_data"))
             else:
                 st.dataframe(insights["likely_scorers"], use_container_width=True, hide_index=True)
         with pi3:
-            st.markdown(ui_t(lang, "likely_cards"))
+            st.markdown(
+                f'{_icon("style", "ms-muted")} **{ui_t(lang, "likely_cards")}**',
+                unsafe_allow_html=True,
+            )
             if insights["likely_cards"].empty:
                 st.caption(ui_t(lang, "no_contrib_data"))
             else:
@@ -2611,7 +2680,10 @@ def main() -> None:
 
         # ── 4. Auto-suggested odds ───────────────────────────────────────────
         st.markdown("---")
-        st.markdown(ui_t(lang, "odds_title"))
+        st.markdown(
+            f'<h4>{_icon("finance")}{ui_t(lang, "odds_title")}</h4>',
+            unsafe_allow_html=True,
+        )
         st.caption(ui_t(lang, "odds_caption"))
 
         combo_key = f"{home_league}|{away_league}|{home_team}|{away_team}"
