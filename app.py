@@ -382,11 +382,26 @@ def ui_t(lang: str, key: str, **kwargs: object) -> str:
     return text.format(**kwargs)
 
 
+_GOOGLE_FONTS_URL = (
+    "https://fonts.googleapis.com/css2?"
+    "family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400"
+    "&family=JetBrains+Mono:wght@500"
+    "&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+    "&display=swap"
+)
+
+
 def apply_style() -> None:
+    # Load Google Fonts via <link> — more reliable than @import inside a body-injected <style>
+    st.markdown(
+        f'<link rel="preconnect" href="https://fonts.googleapis.com">'
+        f'<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+        f'<link rel="stylesheet" href="{_GOOGLE_FONTS_URL}">',
+        unsafe_allow_html=True,
+    )
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@500&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap');
 
         :root {
           --bg:        #0d1117;
@@ -566,10 +581,10 @@ def apply_style() -> None:
         }
         .metric p, .metric span, .metric div { color: var(--ink) !important; }
 
-        /* ── Material Symbols Outlined icon class ── */
+        /* ── Emoji icon class ── */
         .ms {
-          font-family: 'Material Symbols Outlined';
-          font-weight: normal;
+          font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+          font-weight: 400;
           font-style: normal;
           font-size: 1.15em;
           line-height: 1;
@@ -578,8 +593,6 @@ def apply_style() -> None:
           display: inline-block;
           white-space: nowrap;
           direction: ltr;
-          -webkit-font-smoothing: antialiased;
-          font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
           color: var(--accent);
           vertical-align: -0.15em;
           margin-right: 0.3rem;
@@ -706,19 +719,29 @@ def apply_style() -> None:
 
 
 def _icon(name: str, extra: str = "") -> str:
-    """Return a Material Symbols Outlined icon span.
+    """Return an emoji icon span.
 
     Use inside st.markdown(..., unsafe_allow_html=True) calls only.
 
     Args:
-        name:  Material Symbols ligature name, e.g. "home", "analytics".
+        name:  Logical icon name, e.g. "home", "analytics".
         extra: Additional CSS class names, e.g. "ms-lg ms-green".
 
     Returns:
         HTML <span> string rendered as the icon.
     """
+    icon_map = {
+        "home": "🏠",
+        "flight_takeoff": "✈️",
+        "analytics": "📊",
+        "medical_services": "🚑",
+        "sports_soccer": "⚽",
+        "style": "🟨",
+        "finance": "💰",
+    }
+    icon = icon_map.get(name, "•")
     cls = f"ms {extra}".strip() if extra else "ms"
-    return f'<span class="{cls}">{name}</span>'
+    return f'<span class="{cls}">{icon}</span>'
 
 
 def _start_background(cmd: list[str], log_file: Path) -> int:
@@ -2391,7 +2414,7 @@ def _cached_models(
 
 
 def main() -> None:
-    st.set_page_config(page_title="Football Bets Tool", page_icon=":soccer:", layout="wide")
+    st.set_page_config(page_title="Football Bets Tool", page_icon="⚽", layout="wide")
     apply_style()
     ref_now = _reference_now()
     ref_date = ref_now.date()
