@@ -13,6 +13,68 @@ import pandas as pd
 RESULT_TO_CLASS = {"H": 0, "D": 1, "A": 2}
 CLASS_TO_RESULT = {0: "H", 1: "D", 2: "A"}
 
+# ── Derby / same-city rivalry lookup ─────────────────────────────────────────
+# Team names as they appear in football-data.co.uk exports.
+# frozenset allows bidirectional matching regardless of home/away assignment.
+_DERBY_PAIRS: frozenset[frozenset[str]] = frozenset({
+    # England – Premier League (E0)
+    frozenset({"Man City", "Man United"}),
+    frozenset({"Arsenal", "Tottenham"}),
+    frozenset({"Chelsea", "Tottenham"}),
+    frozenset({"Chelsea", "Arsenal"}),
+    frozenset({"Chelsea", "Fulham"}),
+    frozenset({"Liverpool", "Everton"}),
+    frozenset({"Leeds", "Man United"}),
+    frozenset({"Newcastle", "Sunderland"}),
+    frozenset({"West Ham", "Millwall"}),
+    frozenset({"West Ham", "Tottenham"}),
+    # Spain – La Liga (SP1)
+    frozenset({"Real Madrid", "Atletico Madrid"}),
+    frozenset({"Barcelona", "Espanyol"}),
+    frozenset({"Sevilla", "Betis"}),
+    frozenset({"Athletic Club", "Sociedad"}),
+    frozenset({"Valencia", "Villarreal"}),
+    frozenset({"Real Madrid", "Getafe"}),
+    # Italy – Serie A (I1)
+    frozenset({"Juventus", "Torino"}),
+    frozenset({"Inter", "AC Milan"}),
+    frozenset({"Roma", "Lazio"}),
+    # Germany – Bundesliga (D1)
+    frozenset({"Dortmund", "Schalke 04"}),
+    frozenset({"Hamburg", "St Pauli"}),
+    frozenset({"Cologne", "Leverkusen"}),
+    frozenset({"Dortmund", "Cologne"}),
+    # France – Ligue 1 (F1)
+    frozenset({"Paris SG", "Lens"}),
+    frozenset({"Marseille", "Nice"}),
+    frozenset({"Marseille", "Lyon"}),
+    frozenset({"Lille", "Lens"}),
+    # Portugal – Primeira Liga (P1)
+    frozenset({"Benfica", "Sporting CP"}),
+    frozenset({"Benfica", "Porto"}),
+    frozenset({"Sporting CP", "Porto"}),
+    frozenset({"Porto", "Boavista"}),
+    frozenset({"Benfica", "Belenenses"}),
+})
+
+# Runtime override: populated from external source via set_derby_pairs().
+# Falls back to the hardcoded _DERBY_PAIRS when None (offline / dev mode).
+_derby_pairs_override: frozenset[frozenset[str]] | None = None
+
+
+def set_derby_pairs(pairs: set[frozenset[str]]) -> None:
+    """Override the derby-pairs lookup with pairs loaded from an external source."""
+    global _derby_pairs_override
+    if pairs:
+        _derby_pairs_override = frozenset(pairs)
+
+
+def is_derby(home: str, away: str) -> bool:
+    """Return True when the pair is a known same-city / local rivalry."""
+    pool = _derby_pairs_override if _derby_pairs_override is not None else _DERBY_PAIRS
+    return frozenset({home, away}) in pool
+
+
 MATCH_FEATURE_COLS = [
     "form_points_gap",
     "forward_goals_gap",
@@ -27,6 +89,11 @@ MATCH_FEATURE_COLS = [
     "injury_gap",
     "lineup_strength_gap",
     "league_idx",
+    # ── NEW v2 features ──────────────────────────────────────────────────────
+    "home_role_gap",   # Home team home-only PPG minus away team away-only PPG
+    "momentum_gap",    # OLS slope of last-5 points (home minus away) — trend
+    "derby_flag",      # 1.0 if local/same-city rivalry
+    "sot_gap",         # Shots-on-target differential per game last-5
 ]
 
 PLAYER_FEATURE_COLS = [
@@ -63,10 +130,15 @@ class TeamState:
     recent_ga: deque
     recent_cards: deque
     recent_corners_diff: deque
+    recent_sot_diff: deque
     dates: deque
     last_date: pd.Timestamp | None
     total_points: float
     total_matches: int
+    home_points: float
+    home_matches: int
+    away_points: float
+    away_matches: int
 
 
 def _new_state(window: int) -> TeamState:
@@ -76,11 +148,31 @@ def _new_state(window: int) -> TeamState:
         recent_ga=deque(maxlen=window),
         recent_cards=deque(maxlen=window),
         recent_corners_diff=deque(maxlen=window),
+        recent_sot_diff=deque(maxlen=window),
         dates=deque(maxlen=40),
         last_date=None,
         total_points=0.0,
         total_matches=0,
+        home_points=0.0,
+        home_matches=0,
+        away_points=0.0,
+        away_matches=0,
     )
+
+
+def _momentum_slope(points_deque: deque) -> float:
+    """OLS slope of a rolling points sequence, normalised to ±0.9 range."""
+    vals = list(points_deque)
+    n = len(vals)
+    if n < 2:
+        return 0.0
+    x = np.arange(n, dtype=float)
+    y = np.array(vals, dtype=float)
+    x_mean, y_mean = x.mean(), y.mean()
+    denom = float(np.sum((x - x_mean) ** 2))
+    if denom <= 0.0:
+        return 0.0
+    return float(np.sum((x - x_mean) * (y - y_mean))) / denom / 3.0
 
 
 def _mean_or_default(values: deque, default: float) -> float:
@@ -102,6 +194,11 @@ def _summarize_state(state: TeamState, current_date: pd.Timestamp) -> dict[str, 
         "rest_days": rest_days,
         "matches_last8": matches_last8,
         "season_ppg": season_ppg,
+        # ── NEW v2 ──────────────────────────────────────────────────────────
+        "home_ppg": state.home_points / max(state.home_matches, 1),
+        "away_ppg": state.away_points / max(state.away_matches, 1),
+        "sot_diff": _mean_or_default(state.recent_sot_diff, 0.0),
+        "momentum_slope": _momentum_slope(state.recent_points),
     }
 
 
@@ -178,6 +275,8 @@ def build_match_training_data(
         "away_yellow_cards",
         "home_red_cards",
         "away_red_cards",
+        "home_shots_on_target",
+        "away_shots_on_target",
     ):
         if col not in df.columns:
             df[col] = 0.0
@@ -254,6 +353,11 @@ def build_match_training_data(
                 "injury_gap": injury_gap,
                 "lineup_strength_gap": lineup_strength_gap,
                 "league_idx": float(league_map.get(league, 0)),
+                # ── NEW v2 features ──────────────────────────────────────────
+                "home_role_gap": hs["home_ppg"] - aw["away_ppg"],
+                "momentum_gap":  hs["momentum_slope"] - aw["momentum_slope"],
+                "derby_flag":    float(is_derby(home, away)),
+                "sot_gap":       hs["sot_diff"] - aw["sot_diff"],
             }
         )
 
@@ -274,10 +378,12 @@ def build_match_training_data(
         away_cards = float(row.away_yellow_cards) + 2.0 * float(row.away_red_cards)
         home_cd = float(row.home_corners) - float(row.away_corners)
         away_cd = -home_cd
+        home_sot_d = float(row.home_shots_on_target) - float(row.away_shots_on_target)
+        away_sot_d = -home_sot_d
 
-        for key, pts, gf, ga, cards, cd in (
-            (hkey, hp, float(row.home_goals_ft), float(row.away_goals_ft), home_cards, home_cd),
-            (akey, ap, float(row.away_goals_ft), float(row.home_goals_ft), away_cards, away_cd),
+        for key, pts, gf, ga, cards, cd, sot_d, is_home in (
+            (hkey, hp, float(row.home_goals_ft), float(row.away_goals_ft), home_cards, home_cd, home_sot_d, True),
+            (akey, ap, float(row.away_goals_ft), float(row.home_goals_ft), away_cards, away_cd, away_sot_d, False),
         ):
             s = state[key]
             s.recent_points.append(pts)
@@ -285,10 +391,17 @@ def build_match_training_data(
             s.recent_ga.append(ga)
             s.recent_cards.append(cards)
             s.recent_corners_diff.append(cd)
+            s.recent_sot_diff.append(sot_d)
             s.dates.append(mdate)
             s.last_date = mdate
             s.total_points += pts
             s.total_matches += 1
+            if is_home:
+                s.home_points += pts
+                s.home_matches += 1
+            else:
+                s.away_points += pts
+                s.away_matches += 1
 
         h2h_state[pair_key].append(
             {
@@ -330,7 +443,7 @@ def train_match_model(
     model = XGBClassifier(
         objective="multi:softprob",
         num_class=3,
-        n_estimators=60,        # 13 features; 60 trees sufficient, faster on cloud
+        n_estimators=80,        # 17 features; 80 trees sufficient, faster on cloud
         max_depth=3,            # shallower → faster; enough for this feature set
         learning_rate=0.10,
         subsample=0.9,

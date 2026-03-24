@@ -1,0 +1,35 @@
+name: Refresh Match Data
+
+on:
+  schedule:
+    - cron: '15 0,6,12,18 * * *'   # 4x/day: 00:15, 06:15, 12:15, 18:15 UTC
+  workflow_dispatch:                 # allow manual trigger from GitHub UI
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch match & odds data
+        run: |
+          python sports_betting/fetch_top6_data.py \
+            --start-season $(( $(date +%Y) - 5 )) \
+            --end-season $(date +%Y)
+
+      - name: Commit updated data
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "data: auto-refresh matches [skip ci]"
+          file_pattern: "data/sports/processed/*.csv data/sports/processed/*.json"

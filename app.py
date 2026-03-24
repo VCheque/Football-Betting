@@ -47,6 +47,8 @@ from sports_betting.fetch_top6_data import (
 from sports_betting.xgboost_models import (
     CLASS_TO_RESULT,
     MATCH_FEATURE_COLS,
+    is_derby,
+    set_derby_pairs,
     player_probabilities_for_team,
     predict_match_proba,
     train_match_model,
@@ -404,19 +406,19 @@ def apply_style() -> None:
         <style>
 
         :root {
-          --bg:        #0d1117;
-          --bg-2:      #161b27;
-          --card:      #1c2333;
-          --card-2:    #212840;
-          --border:    rgba(148, 163, 184, 0.13);
-          --border-2:  rgba(148, 163, 184, 0.26);
-          --ink:       #e2e8f4;
-          --ink-2:     #94a3b8;
-          --accent:    #38bdf8;
-          --accent-2:  #818cf8;
+          --bg:        #0d1b2a;
+          --bg-2:      #111f2e;
+          --card:      #1a2b3c;
+          --card-2:    #1e3044;
+          --border:    rgba(255, 255, 255, 0.08);
+          --border-2:  rgba(255, 255, 255, 0.15);
+          --ink:       #e8edf2;
+          --ink-2:     #9baab8;
+          --accent:    #60a5fa;
+          --accent-2:  #93c5fd;
           --green:     #34d399;
           --red:       #f87171;
-          --shadow:    0 8px 32px rgba(0, 0, 0, 0.5);
+          --shadow:    0 8px 32px rgba(0, 0, 0, 0.6);
         }
 
         /* ── Base layout ── */
@@ -712,6 +714,40 @@ def apply_style() -> None:
         ::-webkit-scrollbar-track { background: var(--bg-2); }
         ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--ink-2); }
+
+        /* ── Primary vs secondary button type differentiation ── */
+        /* Specificity must match [data-testid="stButton"] > button [0,1,1]
+           so we prefix with the element type to reach the same level,
+           then rely on source-order (later = wins) when both are !important.
+           Multiple data-testid patterns cover Streamlit 1.30–1.45+.        */
+        button[data-testid="stBaseButton-primary"],
+        button[data-testid="baseButton-primary"],
+        button[kind="primary"] {
+          background: var(--accent) !important;
+          color: #000000 !important;
+          border: 1px solid var(--accent) !important;
+          font-weight: 700 !important;
+        }
+        button[data-testid="stBaseButton-primary"]:hover,
+        button[data-testid="baseButton-primary"]:hover,
+        button[kind="primary"]:hover {
+          background: var(--accent-2) !important;
+          color: #000000 !important;
+        }
+        button[data-testid="stBaseButton-secondary"],
+        button[data-testid="baseButton-secondary"],
+        button[kind="secondary"] {
+          background: var(--card-2) !important;
+          color: var(--ink-2) !important;
+          border: 1px solid var(--border) !important;
+        }
+        button[data-testid="stBaseButton-secondary"]:hover,
+        button[data-testid="baseButton-secondary"]:hover,
+        button[kind="secondary"]:hover {
+          background: var(--card) !important;
+          color: var(--ink) !important;
+          border-color: var(--border-2) !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -918,6 +954,7 @@ def build_context(
     injuries_file: Path,
     player_contrib_file: Path,
     other_comp_file: Path,
+    player_stats_file: Path | None = None,
 ) -> tuple[dict[str, object], str]:
     if not data_path.exists():
         return {}, f"Data file not found: {data_path}"
@@ -935,6 +972,7 @@ def build_context(
     injuries_df = _read_optional_csv(injuries_file, required_cols=[])
     contrib_df = _read_optional_csv(player_contrib_file, required_cols=[])
     other_df = _read_optional_csv(other_comp_file, required_cols=[])
+    player_stats_df = _read_optional_csv(player_stats_file, required_cols=[]) if player_stats_file else pd.DataFrame()
 
     snapshot = build_team_snapshot(
         historical=historical,
@@ -943,6 +981,7 @@ def build_context(
         injuries_df=injuries_df,
         player_contrib_df=contrib_df,
         other_comp_df=other_df,
+        player_stats_df=player_stats_df if not player_stats_df.empty else None,
     )
     league_lookup = historical[["league_code", "league_name"]].drop_duplicates()
     snapshot = snapshot.merge(league_lookup, on="league_code", how="left")
@@ -960,6 +999,7 @@ def build_context(
         injuries_df=injuries_df,
         player_contrib_df=contrib_df,
         other_comp_df=other_df,
+        player_stats_df=player_stats_df if not player_stats_df.empty else None,
     )
     current_snapshot = current_snapshot.merge(league_lookup, on="league_code", how="left")
 
@@ -1125,6 +1165,11 @@ def build_feature_vector(
         "injury_gap": float(away.get("injury_impact", 0.0) - home.get("injury_impact", 0.0)),
         "lineup_strength_gap": float(home_lineup_strength - away_lineup_strength),
         "league_idx": league_idx,
+        # ── NEW v2 features ──────────────────────────────────────────────────
+        "home_role_gap":  float(home.get("home_ppg", 0.0) - away.get("away_ppg", 0.0)),
+        "momentum_gap":   float(home.get("last_momentum_slope", 0.0) - away.get("last_momentum_slope", 0.0)),
+        "derby_flag":     float(is_derby(home_team, away_team)),
+        "sot_gap":        float(home.get("last_sot_diff_pg", 0.0) - away.get("last_sot_diff_pg", 0.0)),
     }
     return features, h2h
 
@@ -2384,6 +2429,7 @@ def _cached_context(
     injuries_str: str,
     contrib_str: str,
     other_str: str,
+    player_stats_str: str = "",
 ) -> tuple[dict, str]:
     return build_context(
         Path(data_path_str),
@@ -2392,6 +2438,7 @@ def _cached_context(
         Path(injuries_str),
         Path(contrib_str),
         Path(other_str),
+        player_stats_file=Path(player_stats_str) if player_stats_str else None,
     )
 
 
@@ -2423,25 +2470,18 @@ def main() -> None:
     other_file = Path("data/sports/external/other_competitions_matches.csv")
 
     with st.sidebar:
-        if hasattr(st, "segmented_control"):
-            lang = st.segmented_control(
-                "Language / Idioma",
-                options=list(LANGUAGE_OPTIONS.keys()),
-                format_func=lambda k: LANGUAGE_OPTIONS[k],
-                selection_mode="single",
-                default=st.session_state.get("ui_lang", "en"),
-                key="ui_lang",
-            )
-            if not lang:
-                lang = st.session_state.get("ui_lang", "en")
-        else:
-            lang = st.radio(
-                "Language / Idioma",
-                options=list(LANGUAGE_OPTIONS.keys()),
-                format_func=lambda k: LANGUAGE_OPTIONS[k],
-                key="ui_lang",
-                horizontal=True,
-            )
+        lang = st.session_state.get("ui_lang", "en")
+        _lc1, _lc2 = st.columns(2)
+        with _lc1:
+            if st.button("🇺🇸 EN", use_container_width=True,
+                         type="primary" if lang == "en" else "secondary", key="_lang_en"):
+                st.session_state["ui_lang"] = "en"
+                st.rerun()
+        with _lc2:
+            if st.button("🇲🇿 PT", use_container_width=True,
+                         type="primary" if lang == "pt_mz" else "secondary", key="_lang_pt"):
+                st.session_state["ui_lang"] = "pt_mz"
+                st.rerun()
 
         st.header(ui_t(lang, "settings_header"))
         as_of = st.date_input(ui_t(lang, "as_of_date"), value=ref_date)
@@ -2461,50 +2501,6 @@ def main() -> None:
             help=ui_t(lang, "api_key_help"),
         )
 
-        st.divider()
-        st.subheader(ui_t(lang, "refresh_data"))
-        st.caption(ui_t(lang, "refresh_caption"))
-        refresh_start = st.number_input(
-            ui_t(lang, "start_season"), min_value=1995, max_value=2100, value=ref_date.year - 20
-        )
-        refresh_end = st.number_input(
-            ui_t(lang, "end_season"), min_value=1995, max_value=2100, value=ref_date.year
-        )
-        refresh_min_date = st.date_input(
-            ui_t(lang, "min_match_date"), value=date(ref_date.year - 20, 1, 1)
-        )
-
-        if st.button(ui_t(lang, "refresh_all"), use_container_width=True):
-            pid_m = run_refresh(int(refresh_start), int(refresh_end), refresh_min_date)
-            pid_p = run_player_stats_refresh(api_key=api_key, season="2526")
-            ts = datetime.now().strftime("%H:%M:%S")
-            st.session_state["_refresh_ts"] = ts
-            st.session_state["_refresh_pids"] = (pid_m, pid_p)
-            st.toast(ui_t(lang, "refresh_started", ts=ts, pid_m=pid_m, pid_p=pid_p), icon="🚀")
-
-        if "_refresh_ts" in st.session_state:
-            st.info(
-                ui_t(lang, "last_refresh_started", ts=st.session_state["_refresh_ts"]),
-                icon="ℹ️",
-            )
-
-        # ── Last-updated metadata display ─────────────────────────────────────
-        _meta = load_refresh_metadata()
-        if _meta:
-            st.divider()
-            st.caption(ui_t(lang, "last_successful_refresh"))
-            _m_ts = _meta.get("matches_last_fetch", "–")
-            _p_ts = _meta.get("players_last_fetch", "–")
-            _p_src = _meta.get("players_source", "")
-            st.caption(
-                ui_t(
-                    lang,
-                    "meta_matches",
-                    matches=_m_ts[:16],
-                    players=_p_ts[:16],
-                    src=_p_src,
-                )
-            )
 
     st.title(ui_t(lang, "app_title"))
     st.caption(ui_t(lang, "app_caption"))
@@ -2514,50 +2510,12 @@ def main() -> None:
         [ui_t(lang, "tab_bets"), ui_t(lang, "tab_match"), ui_t(lang, "tab_league")]
     )
 
-    # ── Auto-refresh if data is stale (checks periodically; stale cutoff = now-2h) ─
-    _last_check_str = st.session_state.get("_auto_refresh_last_check")
-    _should_check = True
-    if _last_check_str:
-        try:
-            _last_check = datetime.fromisoformat(str(_last_check_str))
-            _should_check = (datetime.now() - _last_check) >= timedelta(minutes=_AUTO_REFRESH_CHECK_EVERY_MINUTES)
-        except Exception:
-            _should_check = True
-    if _should_check:
-        st.session_state["_auto_refresh_last_check"] = datetime.now().isoformat(timespec="seconds")
-        _meta = load_refresh_metadata()
-        _cutoff = _reference_now()  # now - 2h
-        _m_stale = _is_stale(_meta.get("matches_last_fetch"), cutoff_dt=_cutoff)
-        _p_stale = _is_stale(_meta.get("players_last_fetch"), cutoff_dt=_cutoff)
-
-        _last_trigger_str = st.session_state.get("_auto_refresh_last_trigger")
-        _cooldown_ok = True
-        if _last_trigger_str:
-            try:
-                _last_trigger = datetime.fromisoformat(str(_last_trigger_str))
-                _cooldown_ok = (datetime.now() - _last_trigger) >= timedelta(minutes=_AUTO_REFRESH_TRIGGER_COOLDOWN_MINUTES)
-            except Exception:
-                _cooldown_ok = True
-
-        if (_m_stale or _p_stale) and _cooldown_ok:
-            _ar_start = ref_date.year - 5   # quick 5-year window for auto-refresh
-            _ar_end   = ref_date.year
-            _ar_min   = date(_ar_start, 1, 1)
-            if _m_stale:
-                run_refresh(_ar_start, _ar_end, _ar_min)
-            if _p_stale:
-                run_player_stats_refresh(api_key=api_key, season="2526")
-            st.session_state["_auto_refresh_last_trigger"] = datetime.now().isoformat(timespec="seconds")
-            st.toast(
-                ui_t(lang, "auto_refresh_started"),
-                icon="🔄",
-            )
-
     data_path = DEFAULT_DATA_FILE
     with st.spinner(ui_t(lang, "loading_data")):
         context, err = _cached_context(
             str(data_path), as_of, momentum_window,
             str(injuries_file), str(contrib_file), str(other_file),
+            str(PLAYER_STATS_FILE),
         )
     if err:
         is_missing = "not found" in err.lower() or "no such file" in err.lower()
@@ -2701,7 +2659,26 @@ def main() -> None:
             else:
                 st.dataframe(insights["likely_cards"], use_container_width=True, hide_index=True)
 
-        # ── 4. Auto-suggested odds ───────────────────────────────────────────
+        # ── 4. Suspension & key player alerts ───────────────────────────────
+        _h_snap = _team_row(context["snapshot"], home_league, home_team)
+        _a_snap = _team_row(context["snapshot"], away_league, away_team)
+        _home_susp = float(_h_snap.get("suspended_count", 0.0)) if not _h_snap.empty else 0.0
+        _away_susp = float(_a_snap.get("suspended_count", 0.0)) if not _a_snap.empty else 0.0
+        if _home_susp > 0 or _away_susp > 0:
+            st.warning(
+                f"⚠️ Suspension risk — **{home_team}**: {_home_susp:.1f}  |  **{away_team}**: {_away_susp:.1f}"
+            )
+        _home_kp = str(_h_snap.get("top_player_name", "")) if not _h_snap.empty else ""
+        _away_kp = str(_a_snap.get("top_player_name", "")) if not _a_snap.empty else ""
+        _home_ki = float(_h_snap.get("key_player_impact", 0.0)) if not _h_snap.empty else 0.0
+        _away_ki = float(_a_snap.get("key_player_impact", 0.0)) if not _a_snap.empty else 0.0
+        if _home_kp or _away_kp:
+            st.info(
+                f"⭐ Key players — **{home_team}**: {_home_kp} ({_home_ki:.2f}/90)  |  "
+                f"**{away_team}**: {_away_kp} ({_away_ki:.2f}/90)"
+            )
+
+        # ── 5. Auto-suggested odds ───────────────────────────────────────────
         st.markdown("---")
         st.markdown(
             f'<h4>{_icon("finance")}{ui_t(lang, "odds_title")}</h4>',
@@ -3237,14 +3214,31 @@ def main() -> None:
                 help=ui_t(lang, "bb_min_prob_help"),
             )
 
-        # ── Row 3: markets to consider ────────────────────────────────────────
-        bb_markets = st.multiselect(
-            ui_t(lang, "bb_markets"),
-            options=MARKET_OPTIONS,
-            default=["1X2", "Goals O/U 2.5", "Corners O/U 9.5", "Cards O/U 3.5"],
-            key="bb_markets",
-            help=ui_t(lang, "bb_markets_help"),
-        )
+        # ── Row 3: markets to consider (tile grid) ───────────────────────────
+        _MKT_DEFAULTS = {"1X2", "Goals O/U 2.5", "Corners O/U 9.5", "Cards O/U 3.5"}
+        for _mi, _mn in enumerate(MARKET_OPTIONS):
+            if f"_mkt_{_mi}" not in st.session_state:
+                st.session_state[f"_mkt_{_mi}"] = _mn in _MKT_DEFAULTS
+        _mkt_label_en = "Markets to include — click to toggle"
+        _mkt_label_pt = "Mercados a incluir — clique para alternar"
+        st.caption(_mkt_label_en if lang == "en" else _mkt_label_pt)
+        _mkt_cols = st.columns(5)
+        for _mi, _mn in enumerate(MARKET_OPTIONS):
+            with _mkt_cols[_mi % 5]:
+                _sel = bool(st.session_state.get(f"_mkt_{_mi}", _mn in _MKT_DEFAULTS))
+                if st.button(
+                    _mn,
+                    key=f"_mkt_btn_{_mi}",
+                    type="primary" if _sel else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state[f"_mkt_{_mi}"] = not _sel
+                    st.rerun()
+        bb_markets = [
+            MARKET_OPTIONS[_mi]
+            for _mi in range(len(MARKET_OPTIONS))
+            if st.session_state.get(f"_mkt_{_mi}", MARKET_OPTIONS[_mi] in _MKT_DEFAULTS)
+        ]
 
         st.markdown("---")
 

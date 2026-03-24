@@ -300,12 +300,33 @@ def _prepare_team_match_rows(historical: pd.DataFrame) -> pd.DataFrame:
     return team_rows
 
 
+def _momentum_slope_from_series(points_series: "pd.Series") -> float:
+    """OLS slope of a points sequence normalised by max-points-per-game (3).
+
+    Positive = improving form; negative = declining form.
+    Returns 0.0 if fewer than 2 observations.
+    """
+    import numpy as _np
+    vals = list(points_series)
+    n = len(vals)
+    if n < 2:
+        return 0.0
+    x = _np.arange(n, dtype=float)
+    y = _np.array(vals, dtype=float)
+    x_mean, y_mean = x.mean(), y.mean()
+    denom = float(_np.sum((x - x_mean) ** 2))
+    if denom <= 0.0:
+        return 0.0
+    return float(_np.sum((x - x_mean) * (y - y_mean))) / denom / 3.0
+
+
 def _last_n_features(team_rows: pd.DataFrame, window: int) -> pd.DataFrame:
     recs: list[dict[str, float | str]] = []
     for (league_code, team), g in team_rows.groupby(["league_code", "team"], dropna=False):
         tail = g.tail(window)
         if tail.empty:
             continue
+        sot_diff_pg = float((tail["sot_for"] - tail["sot_against"]).mean()) if "sot_for" in tail.columns else 0.0
         recs.append(
             {
                 "league_code": league_code,
@@ -317,6 +338,9 @@ def _last_n_features(team_rows: pd.DataFrame, window: int) -> pd.DataFrame:
                 "last_corners_diff_pg": float(tail["corners_diff"].mean()),
                 "last_cards_pg": float(tail["cards_weighted"].mean()),
                 "last_draw_rate": float(tail["draw"].mean()),
+                # ── NEW v2 features ──────────────────────────────────────────
+                "last_sot_diff_pg": sot_diff_pg,
+                "last_momentum_slope": _momentum_slope_from_series(tail["points"]),
             }
         )
     return pd.DataFrame(recs)
@@ -750,6 +774,78 @@ def player_match_insights(
     }
 
 
+def build_suspension_snapshot(
+    team_rows: pd.DataFrame,
+    player_stats_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Return one row per team with suspended_count and suspended_impact (0–1).
+
+    Uses player_stats yellow/red cards when available, otherwise returns zeros.
+    """
+    records = []
+    teams = team_rows["team"].unique() if not team_rows.empty else []
+    for team in teams:
+        suspended_count = 0.0
+        if player_stats_df is not None and not player_stats_df.empty:
+            t_col = next((c for c in ("team", "squad") if c in player_stats_df.columns), None)
+            if t_col:
+                ps = player_stats_df[player_stats_df[t_col] == team]
+                threshold = 5
+                if "yellow_cards" in ps.columns:
+                    yc = pd.to_numeric(ps["yellow_cards"], errors="coerce").fillna(0)
+                    suspended_count += float((yc >= threshold).sum()) + 0.5 * float(((yc == threshold - 1)).sum())
+                if "red_cards" in ps.columns:
+                    rc = pd.to_numeric(ps["red_cards"], errors="coerce").fillna(0)
+                    suspended_count += float((rc > 0).sum())
+        records.append({
+            "team": team,
+            "suspended_count": round(suspended_count, 1),
+            "suspended_impact": min(suspended_count / 3.0, 1.0),
+        })
+    return pd.DataFrame(records) if records else pd.DataFrame(
+        columns=["team", "suspended_count", "suspended_impact"]
+    )
+
+
+def build_key_player_snapshot(
+    player_stats_df: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Return one row per team: avg impact/90 of top-11 + best player name."""
+    if player_stats_df is None or player_stats_df.empty:
+        return pd.DataFrame(columns=["team", "key_player_impact", "top_player_name", "top_player_impact"])
+
+    df = player_stats_df.copy()
+    t_col = next((c for c in ("team", "squad") if c in df.columns), None)
+    p_col = next((c for c in ("player", "player_name") if c in df.columns), None)
+    if t_col is None or p_col is None:
+        return pd.DataFrame(columns=["team", "key_player_impact", "top_player_name", "top_player_impact"])
+
+    for c in ("goals", "assists", "xg", "xa", "key_passes", "minutes"):
+        if c not in df.columns:
+            df[c] = 0.0
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+
+    df["minutes"] = df["minutes"].clip(lower=1)
+    df["impact_p90"] = (
+        1.5 * df["goals"] + 1.1 * df["assists"]
+        + 0.8 * df["xg"] + 0.6 * df["xa"]
+        + 0.1 * df["key_passes"]
+    ) / (df["minutes"] / 90.0)
+
+    records = []
+    for team, grp in df.groupby(t_col):
+        top = grp.nlargest(11, "impact_p90")
+        avg_impact = float(top["impact_p90"].mean()) if not top.empty else 0.0
+        best = top.iloc[0] if not top.empty else None
+        records.append({
+            "team": team,
+            "key_player_impact": round(avg_impact, 3),
+            "top_player_name": str(best[p_col]) if best is not None else "",
+            "top_player_impact": round(float(best["impact_p90"]), 3) if best is not None else 0.0,
+        })
+    return pd.DataFrame(records)
+
+
 def build_team_snapshot(
     historical: pd.DataFrame,
     as_of_date: pd.Timestamp,
@@ -757,6 +853,7 @@ def build_team_snapshot(
     injuries_df: pd.DataFrame,
     player_contrib_df: pd.DataFrame,
     other_comp_df: pd.DataFrame,
+    player_stats_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     team_rows = _prepare_team_match_rows(historical)
     aggregate = _team_aggregates(team_rows, as_of_date)
@@ -779,6 +876,8 @@ def build_team_snapshot(
         "last_corners_diff_pg",
         "last_cards_pg",
         "last_draw_rate",
+        "last_sot_diff_pg",
+        "last_momentum_slope",
         "injury_count",
         "injury_impact",
         "player_form",
@@ -796,6 +895,18 @@ def build_team_snapshot(
 
     snapshot["total_matches_last7"] = snapshot["league_matches_last7"] + snapshot["other_matches_last7"]
     snapshot["days_rest_effective"] = snapshot[["days_rest", "other_days_rest"]].min(axis=1)
+
+    susp_snap = build_suspension_snapshot(team_rows, player_stats_df)
+    if not susp_snap.empty:
+        snapshot = snapshot.merge(susp_snap, on="team", how="left")
+        snapshot["suspended_count"] = snapshot["suspended_count"].fillna(0.0)
+        snapshot["suspended_impact"] = snapshot["suspended_impact"].fillna(0.0)
+
+    key_snap = build_key_player_snapshot(player_stats_df)
+    if not key_snap.empty:
+        snapshot = snapshot.merge(key_snap, on="team", how="left")
+        snapshot["key_player_impact"] = snapshot["key_player_impact"].fillna(0.0)
+        snapshot["top_player_name"] = snapshot["top_player_name"].fillna("")
 
     snapshot = _league_positions(snapshot)
     return snapshot

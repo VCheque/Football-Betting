@@ -1,0 +1,37 @@
+name: Refresh Player Stats
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'    # weekly, Sunday 02:00 UTC
+  workflow_dispatch:         # allow manual trigger from GitHub UI
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch player stats
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}   # optional — Understat used if blank
+        run: |
+          python sports_betting/fetch_player_stats.py \
+            --season $(python -c "from datetime import date; y=date.today().year; print(f'{y-1}{str(y)[2:]}' if date.today().month < 8 else f'{y}{str(y+1)[2:]}')") \
+            ${API_FOOTBALL_KEY:+--api-key "$API_FOOTBALL_KEY"}
+
+      - name: Commit updated data
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "data: auto-refresh player stats [skip ci]"
+          file_pattern: "data/sports/processed/player_stats.csv data/sports/processed/*.json"
