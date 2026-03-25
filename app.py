@@ -326,8 +326,8 @@ UI_I18N: dict[str, dict[str, str]] = {
     },
     "bb_fetching": {"en": "Fetching fixtures…", "pt_mz": "A buscar jogos…"},
     "bb_local_loaded": {
-        "en": "📂 Loaded {n} match(es) from local dataset (ESPN returned nothing for this date range — try dates within the next 2 weeks for live fixtures).",
-        "pt_mz": "📂 Carregados {n} jogo(s) do dataset local (a ESPN não devolveu jogos neste intervalo — tente datas dentro das próximas 2 semanas para jogos em tempo real).",
+        "en": "ESPN returned nothing for this date range — try dates within the next 2 weeks for live fixtures.",
+        "pt_mz": "A ESPN não devolveu jogos neste intervalo — tente datas dentro das próximas 2 semanas para jogos em tempo real.",
     },
     "bb_no_matches_range": {
         "en": "No matches found for the selected leagues / date range. Try different dates or refresh data from the sidebar.",
@@ -555,7 +555,22 @@ def apply_style() -> None:
           border: 1px solid var(--border) !important;
           border-radius: 10px !important;
         }
-        [data-testid="stExpander"] summary p { color: var(--ink) !important; font-weight: 600 !important; }
+        [data-testid="stExpander"] details summary {
+          display: flex !important;
+          align-items: flex-start !important;
+          gap: 0.5rem !important;
+        }
+        [data-testid="stExpander"] details summary p {
+          flex: 1 1 auto !important;
+          min-width: 0 !important;
+          margin: 0 !important;
+          color: var(--ink) !important;
+          font-weight: 600 !important;
+        }
+        [data-testid="stExpander"] details summary svg {
+          flex: 0 0 auto !important;
+          margin-top: 0.15rem !important;
+        }
 
         /* ── Alerts ── */
         [data-testid="stAlert"] {
@@ -3306,7 +3321,7 @@ def main() -> None:
                         fetched_df = fallback
                         source_used = "local dataset"
 
-                    if source_used:
+                    if source_used and source_used != "local dataset":
                         fetch_msg = f"[{source_used}] " + fetch_msg
 
                     st.session_state["_bb_fixtures"] = fetched_df
