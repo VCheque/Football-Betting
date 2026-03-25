@@ -572,6 +572,20 @@ def apply_style() -> None:
           margin-top: 0.15rem !important;
         }
 
+        /* ── Expander icon: force Material Symbols font ──────────────────────
+           Streamlit's global rule applies font-family:Inter !important to
+           all spans inside .stApp. The icon class sets Material Symbols
+           without !important, so it loses. Doubling the attribute selectors
+           gives specificity (0,4,1) which beats any Streamlit rule.          ── */
+        [data-testid="stApp"][data-testid="stApp"]
+        span[data-testid="stIconMaterial"][data-testid="stIconMaterial"] {
+          font-family: 'Material Symbols Rounded' !important;
+          font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
+          overflow: hidden !important;
+          width: 1.5rem !important;
+          display: inline-block !important;
+        }
+
         /* ── Alerts ── */
         [data-testid="stAlert"] {
           border-radius: 10px !important;
