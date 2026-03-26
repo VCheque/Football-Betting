@@ -47,6 +47,7 @@ from sports_betting.fetch_top6_data import (
 from sports_betting.xgboost_models import (
     CLASS_TO_RESULT,
     MATCH_FEATURE_COLS,
+    compute_elo_ratings,
     is_derby,
     set_derby_pairs,
     player_probabilities_for_team,
@@ -1032,6 +1033,9 @@ def build_context(
     )
     current_snapshot = current_snapshot.merge(league_lookup, on="league_code", how="left")
 
+    # ── v3: ELO ratings computed once from full history ──────────────────────
+    elo_ratings = compute_elo_ratings(historical)
+
     return {
         "historical": historical,
         "all_matches": df,          # full dataset incl. scheduled (no result) fixtures
@@ -1042,6 +1046,7 @@ def build_context(
         "contrib_df": contrib_df,
         "other_df": other_df,
         "current_season": latest_season,
+        "elo_ratings": elo_ratings,
     }, ""
 
 
@@ -1180,6 +1185,25 @@ def build_feature_vector(
     league_codes = sorted(snapshot["league_code"].astype(str).dropna().unique())
     league_idx = float({c: i for i, c in enumerate(league_codes)}.get(home_league_code, 0))
 
+    # ── v3: ELO gap ───────────────────────────────────────────────────────────
+    elo_ratings = context.get("elo_ratings", {})
+    home_elo = float(elo_ratings.get((home_league_code, home_team), 1500.0))
+    away_elo = float(elo_ratings.get((away_league_code, away_team), 1500.0))
+    elo_gap = home_elo - away_elo
+
+    # ── v3: League rank from current-season snapshot ──────────────────────────
+    cs = context.get("current_snapshot", snapshot)
+    league_cs = cs.loc[cs["league_code"] == home_league_code].copy()
+    if not league_cs.empty and "points" in league_cs.columns:
+        league_cs = league_cs.sort_values("points", ascending=False).reset_index(drop=True)
+        rank_map = {row["team"]: float(i + 1) for i, row in league_cs.iterrows()}
+        default_rank = float(len(league_cs) + 1)
+        home_rank = rank_map.get(home_team, default_rank)
+        away_rank = rank_map.get(away_team, default_rank)
+    else:
+        home_rank = 10.0
+        away_rank = 10.0
+
     features = {
         "form_points_gap": float(home.get("last_points_pg", 0.0) - away.get("last_points_pg", 0.0)),
         "forward_goals_gap": float(home.get("last_goals_for_pg", 0.0) - away.get("last_goals_for_pg", 0.0)),
@@ -1199,6 +1223,10 @@ def build_feature_vector(
         "momentum_gap":   float(home.get("last_momentum_slope", 0.0) - away.get("last_momentum_slope", 0.0)),
         "derby_flag":     float(is_derby(home_team, away_team)),
         "sot_gap":        float(home.get("last_sot_diff_pg", 0.0) - away.get("last_sot_diff_pg", 0.0)),
+        # ── v3: ELO + rank ───────────────────────────────────────────────────
+        "elo_gap":        elo_gap,
+        "home_rank":      home_rank,
+        "away_rank":      away_rank,
     }
     return features, h2h
 

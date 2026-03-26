@@ -13,6 +13,11 @@ import pandas as pd
 RESULT_TO_CLASS = {"H": 0, "D": 1, "A": 2}
 CLASS_TO_RESULT = {0: "H", 1: "D", 2: "A"}
 
+# ── ELO rating constants ──────────────────────────────────────────────────────
+_ELO_DEFAULT: float = 1500.0
+_ELO_K: float = 20.0
+_ELO_HOME_ADVANTAGE: float = 100.0  # added to home rating before computing expected score
+
 # ── Derby / same-city rivalry lookup ─────────────────────────────────────────
 # Team names as they appear in football-data.co.uk exports.
 # frozenset allows bidirectional matching regardless of home/away assignment.
@@ -94,6 +99,10 @@ MATCH_FEATURE_COLS = [
     "momentum_gap",    # OLS slope of last-5 points (home minus away) — trend
     "derby_flag",      # 1.0 if local/same-city rivalry
     "sot_gap",         # Shots-on-target differential per game last-5
+    # ── v3: ELO + league rank ─────────────────────────────────────────────
+    "elo_gap",         # Home ELO minus away ELO (long-term strength signal)
+    "home_rank",       # Home team's current league position (1 = top)
+    "away_rank",       # Away team's current league position (1 = top)
 ]
 
 PLAYER_FEATURE_COLS = [
@@ -246,6 +255,51 @@ def _h2h_summary(
     return float((win_sum / w_sum) - 0.5), float(gd_sum / w_sum)
 
 
+def compute_elo_ratings(
+    matches: pd.DataFrame,
+    k: float = _ELO_K,
+    default: float = _ELO_DEFAULT,
+    home_advantage: float = _ELO_HOME_ADVANTAGE,
+) -> dict[tuple[str, str], float]:
+    """Compute final ELO ratings from a chronologically ordered match history.
+
+    Returns a dict keyed by (league_code, team) → final ELO rating.
+    A home-advantage offset is applied before computing the expected score so
+    that the raw ratings are neutral — the offset only affects win probability,
+    not the stored values.
+    """
+    df = matches.copy()
+    df["match_date"] = pd.to_datetime(df["match_date"], errors="coerce")
+    df = df.loc[df["result_ft"].isin(["H", "D", "A"]) & df["match_date"].notna()].sort_values("match_date")
+
+    ratings: dict[tuple[str, str], float] = defaultdict(lambda: default)
+
+    for row in df.itertuples(index=False):
+        league = str(row.league_code)
+        home = str(row.home_team)
+        away = str(row.away_team)
+        result = str(row.result_ft)
+
+        r_home = ratings[(league, home)]
+        r_away = ratings[(league, away)]
+
+        # Expected score with home-advantage offset (+100 ELO points)
+        exp_home = 1.0 / (1.0 + 10.0 ** ((r_away - r_home - home_advantage) / 400.0))
+        exp_away = 1.0 - exp_home
+
+        if result == "H":
+            s_home, s_away = 1.0, 0.0
+        elif result == "A":
+            s_home, s_away = 0.0, 1.0
+        else:
+            s_home, s_away = 0.5, 0.5
+
+        ratings[(league, home)] = r_home + k * (s_home - exp_home)
+        ratings[(league, away)] = r_away + k * (s_away - exp_away)
+
+    return dict(ratings)
+
+
 def build_match_training_data(
     historical: pd.DataFrame,
     injuries_df: pd.DataFrame | None = None,
@@ -303,6 +357,12 @@ def build_match_training_data(
     state: dict[tuple[str, str], TeamState] = defaultdict(lambda: _new_state(window))
     h2h_state: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
 
+    # ── v3: ELO + running standings ──────────────────────────────────────────
+    elo: dict[tuple[str, str], float] = defaultdict(lambda: _ELO_DEFAULT)
+    # (league_code, season_label) → {team → season points}
+    _spts: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    _smat: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
     league_codes = sorted(df["league_code"].astype(str).dropna().unique())
     league_map = {code: idx for idx, code in enumerate(league_codes)}
 
@@ -320,6 +380,20 @@ def build_match_training_data(
         akey = (league, away)
         hs = _summarize_state(state[hkey], mdate)
         aw = _summarize_state(state[akey], mdate)
+
+        # ── ELO gap (snapshot BEFORE updating for this match) ────────────────
+        elo_gap = elo[(league, home)] - elo[(league, away)]
+
+        # ── League rank (snapshot BEFORE this match is counted) ──────────────
+        season = str(getattr(row, "season_label", "")) or "unknown"
+        skey = (league, season)
+        spts = _spts[skey]
+        sorted_teams = sorted(spts.items(), key=lambda kv: (-kv[1], kv[0]))
+        rank_map = {t: i + 1 for i, (t, _) in enumerate(sorted_teams)}
+        n_known = len(sorted_teams)
+        default_rank = max(n_known + 1, 10)
+        home_rank = float(rank_map.get(home, default_rank))
+        away_rank = float(rank_map.get(away, default_rank))
 
         pair_key = (league, min(home, away), max(home, away))
         h2h_gap, h2h_gd = _h2h_summary(h2h_state[pair_key], home, away, mdate)
@@ -358,21 +432,43 @@ def build_match_training_data(
                 "momentum_gap":  hs["momentum_slope"] - aw["momentum_slope"],
                 "derby_flag":    float(is_derby(home, away)),
                 "sot_gap":       hs["sot_diff"] - aw["sot_diff"],
+                # ── v3: ELO + rank ───────────────────────────────────────────
+                "elo_gap":       elo_gap,
+                "home_rank":     home_rank,
+                "away_rank":     away_rank,
             }
         )
 
         targets.append(RESULT_TO_CLASS[str(row.result_ft)])
         dates.append(mdate)
 
-        if str(row.result_ft) == "H":
-            hp = 3.0
-            ap = 0.0
-        elif str(row.result_ft) == "A":
-            hp = 0.0
-            ap = 3.0
+        result_ft = str(row.result_ft)
+
+        # ── Update ELO AFTER recording features ──────────────────────────────
+        r_h = elo[(league, home)]
+        r_a = elo[(league, away)]
+        exp_h = 1.0 / (1.0 + 10.0 ** ((r_a - r_h - _ELO_HOME_ADVANTAGE) / 400.0))
+        exp_a = 1.0 - exp_h
+        if result_ft == "H":
+            s_h, s_a = 1.0, 0.0
+        elif result_ft == "A":
+            s_h, s_a = 0.0, 1.0
         else:
-            hp = 1.0
-            ap = 1.0
+            s_h, s_a = 0.5, 0.5
+        elo[(league, home)] = r_h + _ELO_K * (s_h - exp_h)
+        elo[(league, away)] = r_a + _ELO_K * (s_a - exp_a)
+
+        # ── Update running season standings ───────────────────────────────────
+        if result_ft == "H":
+            hp, ap = 3.0, 0.0
+        elif result_ft == "A":
+            hp, ap = 0.0, 3.0
+        else:
+            hp, ap = 1.0, 1.0
+        _spts[skey][home] += hp
+        _spts[skey][away] += ap
+        _smat[skey][home] += 1
+        _smat[skey][away] += 1
 
         home_cards = float(row.home_yellow_cards) + 2.0 * float(row.home_red_cards)
         away_cards = float(row.away_yellow_cards) + 2.0 * float(row.away_red_cards)
@@ -443,15 +539,17 @@ def train_match_model(
     model = XGBClassifier(
         objective="multi:softprob",
         num_class=3,
-        n_estimators=80,        # 17 features; 80 trees sufficient, faster on cloud
-        max_depth=3,            # shallower → faster; enough for this feature set
-        learning_rate=0.10,
-        subsample=0.9,
-        colsample_bytree=0.9,
+        n_estimators=300,       # v3: more trees for 20-feature set; hist keeps it fast
+        max_depth=4,            # one level deeper captures ELO/rank interactions
+        learning_rate=0.05,     # lower LR with more trees → better generalisation
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_weight=5,     # regularise to avoid overfitting small draw class
+        reg_alpha=0.1,          # L1 sparsity — prunes irrelevant features
         reg_lambda=1.0,
         eval_metric="mlogloss",
         tree_method="hist",
-        n_jobs=1,               # single thread avoids overhead on shared cloud CPU
+        n_jobs=1,               # single thread on shared cloud CPU
         random_state=42,
     )
     model.fit(X[MATCH_FEATURE_COLS], y, sample_weight=sample_w)
